@@ -37,12 +37,13 @@ gpui-base = { workspace = true, features = ["inspector"] }
 gpui-fps.workspace = true
 
 # Keep the bindings, runtime, and LLRT compatibility facade on the same revision.
-rquickjs = { package = "quickjs-jit", version = "0.12.7", git = "https://github.com/feigeCode/quickjs-jit", rev = "51c57e3cc54407ac6f4938b0e7a9675d5f5f7eac", features = [
+rquickjs = { package = "quickjs-jit", version = "0.12.7", git = "https://github.com/feigeCode/quickjs-jit", rev = "1a5b7fa7311dad0e309357c229fe93a9ee124ad8", features = [
     "macro",
     "loader",
     "jit-abi",
 ], optional = true }
-rquickjs-jit = { package = "quickjs-jit-runtime", version = "0.12.7", git = "https://github.com/feigeCode/quickjs-jit", rev = "51c57e3cc54407ac6f4938b0e7a9675d5f5f7eac", features = ["compiler"], optional = true }
+# `rquickjs-jit` is declared per target below: its JIT compiler needs 64-bit
+# `JSValue` tags, so only targets with native execution support get it.
 # The stdlib facade pins LLRT modules and shares our VM through rquickjs-compat.
 quickjs-jit-stdlib = { version = "0.12.7", git = "https://github.com/longbridge/quickjs-jit", rev = "605da483611a3548edb8c33fdff602e3f5f42076", optional = true }
 # The date type `gpui_base::Date` is built from, for the calendar binding. Same
@@ -80,6 +81,17 @@ windows = { workspace = true, features = [
     "Win32_System_JobObjects",
     "Win32_System_Threading",
 ] }
+
+# The runtime's JIT compiler only exists on the targets that support native
+# execution (see `NATIVE_EXECUTION_SUPPORTED` in quickjs-jit's `jit/src/lib.rs`),
+# so 32-bit targets get the runtime without `compiler` and run the interpreter.
+[target.'cfg(all(target_endian = "little", any(target_arch = "x86_64", target_arch = "aarch64"), any(target_os = "macos", target_os = "windows", target_os = "linux")))'.dependencies]
+rquickjs-jit = { package = "quickjs-jit-runtime", version = "0.12.7", git = "https://github.com/feigeCode/quickjs-jit", rev = "1a5b7fa7311dad0e309357c229fe93a9ee124ad8", features = [
+    "compiler",
+], optional = true }
+
+[target.'cfg(not(all(target_endian = "little", any(target_arch = "x86_64", target_arch = "aarch64"), any(target_os = "macos", target_os = "windows", target_os = "linux"))))'.dependencies]
+rquickjs-jit = { package = "quickjs-jit-runtime", version = "0.12.7", git = "https://github.com/feigeCode/quickjs-jit", rev = "1a5b7fa7311dad0e309357c229fe93a9ee124ad8", optional = true }
 
 [lints]
 workspace = true

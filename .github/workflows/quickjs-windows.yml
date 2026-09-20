@@ -24,7 +24,7 @@ concurrency:
 
 jobs:
   build:
-    name: Build quickjs (i686-pc-windows-msvc)
+    name: QuickJS on i686-pc-windows-msvc
     runs-on: windows-latest
     env:
       RUST_BACKTRACE: 1
@@ -44,3 +44,8 @@ jobs:
           key: quickjs-i686-windows-cargo-${{ hashFiles('**/Cargo.lock') }}
       - name: Build the QuickJS bindings for 32-bit Windows
         run: cargo build -p rquickjs --features macro,loader,jit-abi --target i686-pc-windows-msvc --locked --verbose
+      # The 64-bit-only JIT compiler is pulled in per target by
+      # `crates/shell/Cargo.toml`; 32-bit Windows gets the interpreter-only
+      # runtime, so the shell crates must still compile there.
+      - name: Check the shell crates for 32-bit Windows
+        run: cargo check -p gpui-shell -p gpui-component-shell --target i686-pc-windows-msvc --locked --verbose

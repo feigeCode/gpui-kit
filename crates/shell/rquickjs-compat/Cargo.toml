@@ -11,7 +11,7 @@ publish = false
 path = "src/lib.rs"
 
 [dependencies]
-upstream = { package = "quickjs-jit", version = "0.12.7", git = "https://github.com/feigeCode/quickjs-jit", rev = "51c57e3cc54407ac6f4938b0e7a9675d5f5f7eac", default-features = false }
+upstream = { package = "quickjs-jit", version = "0.12.7", git = "https://github.com/feigeCode/quickjs-jit", rev = "1a5b7fa7311dad0e309357c229fe93a9ee124ad8", default-features = false }
 
 [features]
 default = ["std"]

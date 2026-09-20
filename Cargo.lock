@@ -7877,7 +7877,7 @@ dependencies = [
 [[package]]
 name = "quickjs-jit"
 version = "0.12.7"
-source = "git+https://github.com/feigeCode/quickjs-jit?rev=51c57e3cc54407ac6f4938b0e7a9675d5f5f7eac#51c57e3cc54407ac6f4938b0e7a9675d5f5f7eac"
+source = "git+https://github.com/feigeCode/quickjs-jit?rev=1a5b7fa7311dad0e309357c229fe93a9ee124ad8#1a5b7fa7311dad0e309357c229fe93a9ee124ad8"
 dependencies = [
  "either",
  "indexmap",
@@ -7888,7 +7888,7 @@ dependencies = [
 [[package]]
 name = "quickjs-jit-core"
 version = "0.12.7"
-source = "git+https://github.com/feigeCode/quickjs-jit?rev=51c57e3cc54407ac6f4938b0e7a9675d5f5f7eac#51c57e3cc54407ac6f4938b0e7a9675d5f5f7eac"
+source = "git+https://github.com/feigeCode/quickjs-jit?rev=1a5b7fa7311dad0e309357c229fe93a9ee124ad8#1a5b7fa7311dad0e309357c229fe93a9ee124ad8"
 dependencies = [
  "async-lock",
  "bytes",
@@ -7906,7 +7906,7 @@ dependencies = [
 [[package]]
 name = "quickjs-jit-macro"
 version = "0.12.7"
-source = "git+https://github.com/feigeCode/quickjs-jit?rev=51c57e3cc54407ac6f4938b0e7a9675d5f5f7eac#51c57e3cc54407ac6f4938b0e7a9675d5f5f7eac"
+source = "git+https://github.com/feigeCode/quickjs-jit?rev=1a5b7fa7311dad0e309357c229fe93a9ee124ad8#1a5b7fa7311dad0e309357c229fe93a9ee124ad8"
 dependencies = [
  "convert_case 0.11.0",
  "fnv",
@@ -7924,7 +7924,7 @@ dependencies = [
 [[package]]
 name = "quickjs-jit-runtime"
 version = "0.12.7"
-source = "git+https://github.com/feigeCode/quickjs-jit?rev=51c57e3cc54407ac6f4938b0e7a9675d5f5f7eac#51c57e3cc54407ac6f4938b0e7a9675d5f5f7eac"
+source = "git+https://github.com/feigeCode/quickjs-jit?rev=1a5b7fa7311dad0e309357c229fe93a9ee124ad8#1a5b7fa7311dad0e309357c229fe93a9ee124ad8"
 dependencies = [
  "cranelift-codegen",
  "cranelift-frontend",
@@ -7959,7 +7959,7 @@ dependencies = [
 [[package]]
 name = "quickjs-jit-sys"
 version = "0.12.7"
-source = "git+https://github.com/feigeCode/quickjs-jit?rev=51c57e3cc54407ac6f4938b0e7a9675d5f5f7eac#51c57e3cc54407ac6f4938b0e7a9675d5f5f7eac"
+source = "git+https://github.com/feigeCode/quickjs-jit?rev=1a5b7fa7311dad0e309357c229fe93a9ee124ad8#1a5b7fa7311dad0e309357c229fe93a9ee124ad8"
 dependencies = [
  "bindgen",
  "cc",
