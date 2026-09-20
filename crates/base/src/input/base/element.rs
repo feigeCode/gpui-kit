@@ -1503,7 +1503,7 @@ impl<M: InputModeKind> TextElement<M> {
                 line.wrapped_lines
                     .iter()
                     .position(|shaped| {
-                        row_end += shaped.len();
+                        row_end += shaped.len;
                         local_offset <= row_end
                     })
                     .unwrap_or(0)

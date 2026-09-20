@@ -580,7 +580,7 @@ impl RenderOnce for Dialog {
         let on_cancel = self.button_props.cancel_handler();
         let has_footer = self.footer.is_some();
         let default_footer = self.default_footer;
-        let show_cancel = self.button_props.show_cancel();
+        let show_cancel = self.button_props.is_cancel_shown();
 
         let window_paddings = crate::window_border::window_paddings(window);
         let view_size = window.viewport_size()

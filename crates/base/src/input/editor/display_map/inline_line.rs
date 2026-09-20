@@ -2,6 +2,7 @@
 use gpui::{App, Pixels, Point, ShapedLine, SharedString, TextAlign, Window, point, px};
 use std::ops::Range;
 
+#[derive(Clone)]
 pub(crate) struct InlineFragment {
     pub(crate) range: Range<usize>,
     pub(crate) x: Pixels,
@@ -9,6 +10,7 @@ pub(crate) struct InlineFragment {
     pub(crate) text: Option<ShapedLine>,
 }
 
+#[derive(Clone)]
 pub(crate) struct InputLine {
     pub(crate) len: usize,
     pub(crate) width: Pixels,
@@ -17,6 +19,7 @@ pub(crate) struct InputLine {
 }
 // Keep the ordinary shaped row inline: boxing it would add an allocation to
 // every existing plain-text row. Only token rows allocate fragment storage.
+#[derive(Clone)]
 #[allow(clippy::large_enum_variant)]
 enum Content {
     Text(ShapedLine),
@@ -33,6 +36,31 @@ impl From<ShapedLine> for InputLine {
     }
 }
 impl InputLine {
+    /// Cut this row in two at a byte offset, the way [`ShapedLine::split_at`] cuts a
+    /// plain shaped row.
+    ///
+    /// A token row holds pre-shaped fragments that cannot be cut at an arbitrary byte
+    /// without re-shaping, so it comes back whole with an empty tail. The only caller
+    /// splits rows it laid out itself, where an inline widget reserves room between two
+    /// runs of the same row.
+    pub(crate) fn split_at(&self, ix: usize) -> (Self, Self) {
+        match &self.content {
+            Content::Text(line) => {
+                let (left, right) = line.split_at(ix);
+                (Self::from(left), Self::from(right))
+            }
+            Content::Inline(_) => (
+                self.clone(),
+                Self {
+                    len: 0,
+                    width: px(0.),
+                    text: SharedString::default(),
+                    content: Content::Inline(Vec::new()),
+                },
+            ),
+        }
+    }
+
     pub(crate) fn inline(text: SharedString, fragments: Vec<InlineFragment>) -> Self {
         let width = fragments.last().map_or(px(0.), |f| f.x + f.width);
         Self {

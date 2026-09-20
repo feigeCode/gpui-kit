@@ -1029,7 +1029,7 @@ impl LineLayout {
         &self,
         text_align: TextAlign,
         align_width: Option<Pixels>,
-    ) -> Vec<(Pixels, ShapedLine)> {
+    ) -> Vec<(Pixels, InputLine)> {
         let Some(line) = self.wrapped_lines.first() else {
             return Vec::new();
         };
@@ -1046,17 +1046,17 @@ impl LineLayout {
         let mut x = base;
         let mut painted = 0usize;
         for (offset, width) in &self.inline_widgets {
-            let split = offset.saturating_sub(painted).min(remaining.len());
+            let split = offset.saturating_sub(painted).min(remaining.len);
             let (left, right) = remaining.split_at(split);
             let left_width = left.width;
-            if left.len() > 0 {
+            if left.len > 0 {
                 segments.push((x, left));
             }
             x += left_width + *width;
             painted = *offset;
             remaining = right;
         }
-        if remaining.len() > 0 {
+        if remaining.len > 0 {
             segments.push((x, remaining));
         }
         segments
