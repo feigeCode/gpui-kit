@@ -117,6 +117,10 @@ window.open_dialog(cx, |dialog, window, cx| {
 })
 ```
 
+Dialog 不会超出窗口。宽度最多为视口宽度减去两侧各 16px 的边距，高度最多为顶部偏移到底部
+16px 边距之间的空间，因此标题和底部操作区始终可见，正文在内部滚动。`w`、`max_w`、`h` 和
+`margin_top` 在这些限制内生效；本来就放得下的 Dialog 会保持其设定尺寸和默认位置。
+
 ### 常用选项
 
 ```rust
@@ -130,6 +134,10 @@ window.open_dialog(cx, |dialog, _, _| {
         .child("Dialog content")
 })
 ```
+
+### 操作按钮
+
+`Dialog` 自己的按钮放在 [`footer`](#dialogfooter) 里并派发 `Confirm` / `Cancel`；`on_ok`、`on_cancel` 决定 Enter 与 Esc 的行为。需要默认按钮的确认框请用 [AlertDialog](./alert-dialog.md)。
 
 ### 嵌套对话框
 

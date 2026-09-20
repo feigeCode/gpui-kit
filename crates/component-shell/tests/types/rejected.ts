@@ -1,5 +1,21 @@
 import { div } from 'gpui-kit';
 import { Spinner, Empty, EmptyHeader, EmptyMedia } from 'gpui-component';
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput, TextareaState } from 'gpui-component';
+
+// @ts-expect-error Group sizing uses the standard control tiers.
+new InputGroup('group').size('icon-small');
+// @ts-expect-error Addons use logical inline/block alignment.
+new InputGroupAddon('addon').align('left');
+// @ts-expect-error Addon content uses one ordered child sequence.
+new InputGroupAddon('addon').button(new InputGroupButton('action'));
+// @ts-expect-error Icons use an asset path.
+new InputGroupButton('button').icon(123);
+// @ts-expect-error Buttons expose a closed set of variants.
+new InputGroupButton('button').variant('custom');
+// @ts-expect-error A single-line part requires InputState.
+new InputGroupInput(TextareaState());
+// @ts-expect-error Buttons size through the standard control tiers, not icon variants.
+new InputGroupButton('button').size('icon-small');
 
 // @ts-expect-error Empty actions belong to its child controls.
 new Empty().p(4).on_click(() => {});

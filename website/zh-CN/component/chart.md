@@ -469,7 +469,18 @@ CandlestickChart::new(data)
     .tick_margin(2)
 ```
 
-涨跌颜色会自动使用主题中的 bullish 和 bearish 配色。
+收盘高于开盘的 K 线使用主题的 `chart.bullish` 色，收盘不高于开盘的使用 `chart.bearish` 色。红涨绿跌的市场把两者对调即可：
+
+```rust
+CandlestickChart::new(data)
+    .x(|d| d.date.clone())
+    .open(|d| d.open)
+    .high(|d| d.high)
+    .low(|d| d.low)
+    .close(|d| d.close)
+    .bullish(cx.theme().danger)
+    .bearish(cx.theme().success)
+```
 
 ### SankeyChart
 
@@ -564,6 +575,69 @@ SankeyChart::new(nodes, links).value_scale(SankeyValueScale::Sqrt)
 ```
 
 无论用哪种缩放，每个节点都被其连接精确填满，所以子节点高度始终与父节点匹配。
+
+## 悬停与 Tooltip
+
+图表在设置 `id` 之前都是静态绘图。设置之后，它会对光标做命中测试，为光标所在的数据显示 tooltip，并按图表类型强调这条数据：
+
+```rust
+LineChart::new(data)
+    .x(|d| d.date.clone())
+    .y(|d| d.value)
+    .name("Desktop") // tooltip 行中的系列名
+    .id("visitors")  // 在同级元素中须唯一
+```
+
+| 图表 | 悬停时 |
+| --- | --- |
+| `LineChart`、`AreaChart` | 十字线和每个系列的圆点沿折线滑到悬停的数据点，圆点外扩出一圈光晕。 |
+| `BarChart` | 与柱同宽的高亮条滑到悬停的柱，其余柱淡出到它后面。 |
+| `PieChart` | 悬停的扇区从圆环中抬起，其余扇区淡出；tooltip 显示数值与占比。 |
+| `RadarChart` | 每个系列的圆点沿多边形滑到悬停的辐条。 |
+| `CandlestickChart` | 高亮条滑到悬停的 K 线；tooltip 列出开盘、最高、最低、收盘。 |
+| `SankeyChart` | 悬停节点的连接保持颜色，其余淡出；tooltip 显示节点的标签与流量。 |
+
+tooltip 框跟随光标，靠近边缘时翻向绘图区中心。`AreaChart` 与 `RadarChart` 每个系列各取一个 `.name()`，在对应的 `.y()` / `.value()` 之后调用。
+
+### 动效
+
+强调效果使用样式层的 motion tokens（`cx.theme().motion_tokens()`）驱动：十字线、高亮条、圆点等指示器以快速弹簧跟随悬停的数据，饼图扇区以 control 弹簧抬起，整个覆盖层在光标落到数据上时淡入、离开后淡出。动效遵循操作系统的减弱动态效果偏好，开启后所有值立即到达目标。
+
+### 缓存
+
+设置了 `id` 的图表还会跨帧保留较重的几何计算，因为图表在屏幕上的每一帧都会重绘：折线与面积的描边、饼图扇区在投影点不变时保持已细分的路径，桑基图在数据、设置和尺寸不变时保留布局。没有 `id` 的图表每次绘制都重新计算，否则同级图表会共用同一份缓存。
+
+### 自定义 Plot
+
+自定义 [`Plot`] 以同样的方式接入：在 `Plot::id` 返回 id，在 `Plot::tooltip_state` 解析光标所在的数据，在 `Plot::tooltip` 构建覆盖层。要为强调效果加动画，实现 `Plot::hover`——它在每帧的 `tooltip` 与 `paint` 之前运行，收到当前聚焦的 [`PlotHover`]；它携带 `TooltipState`，光标离开后会保留一段时间，`hover.focus()` 逐渐回到零，因此在这里采样动效并把结果存到 `self` 供另外两个方法使用。`tooltip` 返回的 `Tooltip` 会自动随悬停淡入淡出：
+
+```rust
+fn hover(&mut self, hover: Option<&PlotHover>, window: &mut Window, cx: &mut App) {
+    self.band_center = hover.map(|hover| {
+        spring(
+            ("my-plot", "band"),
+            hover.state().cross_line.x,
+            // 悬停的第一帧直接采用该数据，而不是从上次悬停结束处滑过来。
+            cx.theme().motion_tokens().spring_control.with_travel(!hover.is_entering()),
+            window,
+            cx,
+        )
+    });
+}
+
+fn tooltip(&self, state: &TooltipState, cursor: Point<Pixels>, bounds: Bounds<Pixels>, _: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    let center = self.band_center.unwrap_or(state.cross_line.x);
+    Some(
+        Tooltip::new(cursor, bounds.size)
+            .cross_line(CrossLine::new(point(center, state.cross_line.y)).band(px(24.)))
+            .title("Title")
+            .row(cx.theme().chart_1, "Series", "42")
+            .into_any_element(),
+    )
+}
+```
+
+`Dot::halo(size)` 绘制内置图表放在悬停圆点后面的半透明光晕。
 
 ## 数据结构示例
 
@@ -664,7 +738,7 @@ let chart = LineChart::new(data)
     .stroke(cx.theme().chart_1);
 ```
 
-可用主题色通常包括 `chart_1` 到 `chart_5`。
+可用主题色为 `cx.theme().chart_1` 到 `cx.theme().chart_5`（主题文件中的 `chart.1` 到 `chart.5`）。
 
 ## API 参考
 

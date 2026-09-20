@@ -1,6 +1,6 @@
 [package]
 name = "rquickjs"
-version = "0.12.7"
+version = "0.12.9"
 edition = "2021"
 rust-version = "1.87"
 license = "MIT"
@@ -11,7 +11,7 @@ publish = false
 path = "src/lib.rs"
 
 [dependencies]
-upstream = { package = "quickjs-jit", version = "0.12.7", git = "https://github.com/feigeCode/quickjs-jit", rev = "1a5b7fa7311dad0e309357c229fe93a9ee124ad8", default-features = false }
+upstream = { package = "quickjs-jit", version = "0.12.9", git = "https://github.com/feigeCode/quickjs-jit", rev = "2287cef708a3e5b35e49ea6333909171df954e9a", default-features = false }
 
 [features]
 default = ["std"]

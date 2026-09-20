@@ -20,7 +20,7 @@ pub use grid::Grid;
 pub use label::PlotLabel;
 pub use path_cache::{PathCache, PathCaches, ShapeKey};
 
-use tooltip::TooltipState;
+use tooltip::{PlotHover, TooltipState};
 
 pub trait Plot: IntoElement {
     /// Lay out and place the child elements this plot hosts (e.g. element labels).
@@ -71,6 +71,21 @@ pub trait Plot: IntoElement {
         None
     }
 
+    /// Receive the datum in focus this frame, before [`Plot::tooltip`] and
+    /// [`Plot::paint`] run.
+    ///
+    /// `hover` carries the [`TooltipState`] the cursor resolved to, and it
+    /// lingers after the cursor leaves while [`PlotHover::focus`] eases back to
+    /// zero, so a hover-driven presentation can fade out over the last datum
+    /// instead of vanishing. `None` means nothing is hovered and nothing is
+    /// fading.
+    ///
+    /// Called on every frame the plot has an [`Plot::id`], so this is where a
+    /// plot samples its hover motion ([`gpui_base::transition`],
+    /// [`gpui_base::spring`]) and keeps the result for the other two methods.
+    /// The default ignores the hover.
+    fn hover(&mut self, _hover: Option<&PlotHover>, _window: &mut Window, _cx: &mut App) {}
+
     /// Render the tooltip overlay for the active [`TooltipState`].
     ///
     /// `cursor` is the live cursor position (relative to the plot origin) and `bounds` is the
@@ -79,6 +94,10 @@ pub trait Plot: IntoElement {
     /// absolutely positioned above the plot graphics but below sibling content drawn after
     /// the plot ([`tooltip::Tooltip`] defers its box to paint above everything). The default
     /// returns `None`.
+    ///
+    /// Also called while the hover fades out, with the lingering `state` and the
+    /// last `cursor`; a [`tooltip::Tooltip`] returned here fades with the hover
+    /// on its own.
     fn tooltip(
         &self,
         _state: &TooltipState,

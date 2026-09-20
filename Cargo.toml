@@ -32,9 +32,11 @@ members = [
     "examples/sidebar",
     "examples/text_max_lines",
     "examples/text_selection",
+    "examples/touch_selection",
     "examples/root_borderless",
     "examples/table_in_scrollable",
     "examples/markdown_table",
+    "examples/ai_recipes",
     "crates/shell",
     "crates/shell/rquickjs-compat",
     "crates/component-shell",
@@ -46,15 +48,15 @@ publish = false
 edition = "2024"
 
 [workspace.dependencies]
-gpui-kit = { path = "crates/kit", version = "0.6.1" }
-gpui-component = { path = "crates/component", version = "0.6.1" }
-gpui-base = { path = "crates/base", version = "0.6.1" }
-gpui-component-macros = { path = "crates/component-macros", version = "0.6.1" }
-gpui-kit-assets = { path = "crates/assets", version = "0.6.1" }
-gpui-fps = { path = "crates/fps", version = "0.6.1" }
-gpui-shell = { path = "crates/shell", version = "0.6.1" }
-gpui-wry = { path = "crates/webview", version = "0.6.1" }
-gpui-component-shell = { path = "crates/component-shell", version = "0.6.1" }
+gpui-kit = { path = "crates/kit", version = "0.6.4" }
+gpui-component = { path = "crates/component", version = "0.6.4" }
+gpui-base = { path = "crates/base", version = "0.6.4" }
+gpui-component-macros = { path = "crates/component-macros", version = "0.6.4" }
+gpui-kit-assets = { path = "crates/assets", version = "0.6.4" }
+gpui-fps = { path = "crates/fps", version = "0.6.4" }
+gpui-shell = { path = "crates/shell", version = "0.6.4" }
+gpui-wry = { path = "crates/webview", version = "0.6.4" }
+gpui-component-shell = { path = "crates/component-shell", version = "0.6.4" }
 story = { path = "crates/story" }
 
 gpui = { package = "gpui-pre", version = "0.3.5" }

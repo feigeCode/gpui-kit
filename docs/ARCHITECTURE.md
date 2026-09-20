@@ -102,8 +102,8 @@ semantic seams. Base does not walk arbitrary descendant trees to discover them.
 ### 3. Stateful systems
 
 Examples include InputState, TextareaState, EditorState, CalendarState, TreeState, SliderState,
-ResizableState, OtpState, ColorPickerState, ToastManager, ToastStackState, NavStackState, DockArea,
-and TabGroup.
+ResizableState, OtpState, ColorPickerState, QuestionnaireState, ToastManager, ToastStackState,
+NavStackState, DockArea, and TabGroup.
 
 These modules retain data because their behavior spans frames or requires
 measurement, subscriptions, history, focus, or incremental updates. State is
@@ -338,6 +338,19 @@ coordinate system:
 This keeps product values in the presentation layer while keeping coupled text,
 gutter, and scrollbar geometry local to the editing engine.
 
+### Input groups
+
+`gpui-component::input::InputGroup` composes one `Input` or `Textarea` with typed
+addons and buttons in a shared frame. It owns no editing state: the control is
+the ordinary styled `Input`, rendered without its own border, background and
+focus ring, so every capability the input gains — paste hooks, touch
+selection, native menus, accessibility — reaches a group without being
+mirrored. `InputGroup` owns the outer border, radius, focus and error
+treatment, and four logical addon regions; `InputGroupButton` wraps a `Button`
+with compact presentation and sizes through `Sizable`. Textarea viewport
+geometry remains with the editing engine. Validation appearance is
+caller-controlled, separately from edit acceptance.
+
 Platform-specific behavior is isolated behind adapters. For example, folding is
 disabled on WebAssembly, time uses `web_time` where needed, and native text
 content support is conditionally compiled.
@@ -557,6 +570,9 @@ Call `gpui_base::init(cx)` before constructing base controls. Initialization:
 
 - installs the base global theme if absent;
 - initializes shared global state;
+- reads the operating system's reduced-motion preference into
+  `App::set_reduce_motion` (see `reduce_motion.rs` for the per-platform
+  sources and the rule that an application's own setting wins);
 - registers key bindings and infrastructure for dialog, focus traps, popover,
   sheet, combobox, color picker, select, number input, input, and tree.
 

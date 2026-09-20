@@ -1,7 +1,7 @@
 [package]
 name = "gpui-shell"
 description = "A scriptable application runtime for GPUI, built on gpui-base."
-version = "0.6.1"
+version = "0.6.4"
 keywords = ["desktop", "gpui", "javascript", "runtime"]
 license = "Apache-2.0"
 publish = false
@@ -37,7 +37,7 @@ gpui-base = { workspace = true, features = ["inspector"] }
 gpui-fps.workspace = true
 
 # Keep the bindings, runtime, and LLRT compatibility facade on the same revision.
-rquickjs = { package = "quickjs-jit", version = "0.12.7", git = "https://github.com/feigeCode/quickjs-jit", rev = "1a5b7fa7311dad0e309357c229fe93a9ee124ad8", features = [
+rquickjs = { package = "quickjs-jit", version = "0.12.9", git = "https://github.com/feigeCode/quickjs-jit", rev = "2287cef708a3e5b35e49ea6333909171df954e9a", features = [
     "macro",
     "loader",
     "jit-abi",
@@ -86,12 +86,12 @@ windows = { workspace = true, features = [
 # execution (see `NATIVE_EXECUTION_SUPPORTED` in quickjs-jit's `jit/src/lib.rs`),
 # so 32-bit targets get the runtime without `compiler` and run the interpreter.
 [target.'cfg(all(target_endian = "little", any(target_arch = "x86_64", target_arch = "aarch64"), any(target_os = "macos", target_os = "windows", target_os = "linux")))'.dependencies]
-rquickjs-jit = { package = "quickjs-jit-runtime", version = "0.12.7", git = "https://github.com/feigeCode/quickjs-jit", rev = "1a5b7fa7311dad0e309357c229fe93a9ee124ad8", features = [
+rquickjs-jit = { package = "quickjs-jit-runtime", version = "0.12.9", git = "https://github.com/feigeCode/quickjs-jit", rev = "2287cef708a3e5b35e49ea6333909171df954e9a", features = [
     "compiler",
 ], optional = true }
 
 [target.'cfg(not(all(target_endian = "little", any(target_arch = "x86_64", target_arch = "aarch64"), any(target_os = "macos", target_os = "windows", target_os = "linux"))))'.dependencies]
-rquickjs-jit = { package = "quickjs-jit-runtime", version = "0.12.7", git = "https://github.com/feigeCode/quickjs-jit", rev = "1a5b7fa7311dad0e309357c229fe93a9ee124ad8", optional = true }
+rquickjs-jit = { package = "quickjs-jit-runtime", version = "0.12.9", git = "https://github.com/feigeCode/quickjs-jit", rev = "2287cef708a3e5b35e49ea6333909171df954e9a", optional = true }
 
 [lints]
 workspace = true

@@ -4,13 +4,15 @@ use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AccessibleAction, AnyElement, App, DefiniteLength, Edges, ElementId, Entity, Hsla,
     InteractiveElement as _, IntoElement, ParentElement as _, Rems, RenderOnce, Role, SharedString,
-    StatefulInteractiveElement as _, StyleRefinement, Styled, TextAlign, Window, div, px, relative,
+    StatefulInteractiveElement as _, StyleRefinement, Styled, TextAlign, TouchPhase, Window, div,
+    px, relative,
 };
 
 use crate::button::{Button, ButtonRounded, ButtonVariants as _};
 use crate::input::clear_button;
 use crate::native_menu::NativeMenu;
 use crate::spinner::Spinner;
+use crate::touch_selection::{EditMenuItem, TouchSelectionOverlay};
 use crate::{ActiveTheme, Colorize, v_flex};
 use crate::{IconName, Size};
 use crate::{RoleOverride, Selectable, StyledExt, h_flex};
@@ -108,6 +110,8 @@ pub(crate) fn input_style(disabled: bool, cx: &App) -> (Hsla, Hsla) {
 /// A text input element bind to an [`InputState`].
 #[derive(IntoElement)]
 pub struct Input {
+    token_renderer: Option<gpui_base::input::InlineTokenRenderer>,
+    token_click_listener: Option<gpui_base::input::InlineTokenClickListener>,
     id: Option<ElementId>,
     state: TextInputState,
     style: StyleRefinement,
@@ -137,6 +141,9 @@ pub struct Input {
     /// An optional palette that wins over the theme-derived one. Set through
     /// [`super::Editor::editor_style`], which is the only public entry point.
     editor_style: Option<EditorStyleOverrides>,
+    /// An optional paste handler. If set, it is invoked with the clipboard item
+    /// before the default text insertion. Return `true` if handled.
+    paste_handler: Option<Rc<dyn Fn(&gpui::ClipboardItem, &mut Window, &mut App) -> bool>>,
 }
 
 impl Sizable for Input {
@@ -169,6 +176,27 @@ impl crate::FocusableExt for Input {
 }
 
 impl Input {
+    /// The element each atomic inline token renders as, in place of the default
+    /// [`InputToken`](super::InputToken); editing and history stay
+    /// with the input.
+    pub fn token<R: IntoElement>(
+        mut self,
+        render: impl Fn(&super::InlineTokenContext, &mut Window, &mut App) -> R + 'static,
+    ) -> Self {
+        self.token_renderer = Some(Rc::new(move |token, window, cx| {
+            render(token, window, cx).into_any_element()
+        }));
+        self
+    }
+    /// Open a reference after a completed, unconsumed token click.
+    pub fn on_token_click(
+        mut self,
+        listener: impl Fn(&super::InlineTokenClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.token_click_listener = Some(Rc::new(listener));
+        self
+    }
+
     /// Sets the GPUI identity of the input frame. By default it uses the state entity ID.
     pub fn id(mut self, id: impl Into<ElementId>) -> Self {
         self.id = Some(id.into());
@@ -212,6 +240,9 @@ impl Input {
             aria_label: None,
             context_menu_builder: None,
             editor_style: None,
+            paste_handler: None,
+            token_renderer: None,
+            token_click_listener: None,
         }
     }
 
@@ -227,6 +258,16 @@ impl Input {
     }
 
     /// Set the developer-assigned identifier exposed to accessibility clients.
+    /// The state this input renders; a compound control reads focus and
+    /// presentation from it.
+    pub(crate) fn state(&self) -> &TextInputState {
+        &self.state
+    }
+
+    pub(crate) fn is_disabled(&self) -> bool {
+        self.disabled
+    }
+
     pub fn accessibility_id(mut self, id: impl Into<SharedString>) -> Self {
         self.accessibility_id = Some(id.into());
         self
@@ -339,6 +380,101 @@ impl Input {
         self
     }
 
+    /// Intercept paste payloads (images, files) before the default text insertion.
+    ///
+    /// The handler receives the clipboard item and returns whether it took the
+    /// paste: `true` stops the `input::Paste` action so the input inserts
+    /// nothing, `false` lets it reach the engine, which inserts
+    /// `clipboard.text()` as today. Text stays in the `Rope`; images and
+    /// copied files (`ClipboardEntry::Image`, `ClipboardEntry::ExternalPaths`)
+    /// belong in app-owned state beside the input (e.g. `Attachment`s), never
+    /// inside it.
+    ///
+    /// Known limit: on web `read_from_clipboard()` is `None` (text arrives
+    /// through the platform input handler); image paste there needs
+    /// `read_from_clipboard_async` and permission, out of scope here.
+    pub fn on_paste(
+        mut self,
+        handler: impl Fn(&gpui::ClipboardItem, &mut Window, &mut App) -> bool + 'static,
+    ) -> Self {
+        self.paste_handler = Some(Rc::new(handler));
+        self
+    }
+
+    /// The handles and the edit menu of the selection a long press made.
+    ///
+    /// The menu offers what the native context menu would: Cut, Copy, Paste
+    /// and Select All, leaving out what cannot apply right now rather than
+    /// disabling it. Cut, Copy and Paste go through the input's actions, so a
+    /// custom key binding or an open completion menu sees them the same way.
+    fn render_touch_selection(
+        state: &TextInputState,
+        window: &Window,
+        cx: &App,
+    ) -> Vec<AnyElement> {
+        if state.touch_selection(cx).is_none() {
+            return Vec::new();
+        }
+        let capabilities = state.context_menu_capabilities(cx);
+        let editable = capabilities.is_editable();
+        let copyable = capabilities.is_copyable();
+        // Offered whenever the text can change, without peeking at the
+        // clipboard: on iOS every read of it shows the system's paste banner,
+        // and an empty clipboard pastes nothing.
+        let pasteable = editable;
+        let selectable = state.text(cx).len() > 0 && !state.is_all_selected(cx);
+        let focus_handle = state.presentation(cx).focus_handle().clone();
+
+        let dispatch = {
+            let focus_handle = focus_handle.clone();
+            move |action: &dyn gpui::Action, window: &mut Window, cx: &mut App| {
+                focus_handle.dispatch_action(action, window, cx);
+            }
+        };
+        let mut items = Vec::with_capacity(4);
+        if editable && copyable {
+            let dispatch = dispatch.clone();
+            items.push(EditMenuItem::new(t!("Input.Cut"), move |window, cx| {
+                dispatch(&gpui_base::input::Cut, window, cx);
+            }));
+        }
+        if copyable {
+            let dispatch = dispatch.clone();
+            let state = state.clone();
+            items.push(EditMenuItem::new(t!("Input.Copy"), move |window, cx| {
+                dispatch(&gpui_base::input::Copy, window, cx);
+                state.close_edit_menu(cx);
+            }));
+        }
+        if pasteable {
+            let dispatch = dispatch.clone();
+            items.push(EditMenuItem::new(t!("Input.Paste"), move |window, cx| {
+                dispatch(&gpui_base::input::Paste, window, cx);
+            }));
+        }
+        if selectable {
+            let state = state.clone();
+            items.push(EditMenuItem::new(
+                t!("Input.Select All"),
+                move |window, cx| state.select_all_from_edit_menu(window, cx),
+            ));
+        }
+
+        let drag_state = state.clone();
+        let source_state = state.clone();
+        TouchSelectionOverlay::new(
+            ("input-touch-selection", state.entity_id()),
+            move |_, cx| source_state.touch_selection(cx),
+        )
+        .handles(move |edge, phase, position, _, cx| match phase {
+            TouchPhase::Started => drag_state.begin_edge_drag(edge, position, cx),
+            TouchPhase::Moved => drag_state.update_edge_drag(position, cx),
+            TouchPhase::Ended | TouchPhase::Cancelled => drag_state.end_edge_drag(cx),
+        })
+        .items(items)
+        .into_elements(window, cx)
+    }
+
     fn render_toggle_mask_button(state: &TextInputState, cx: &App) -> impl IntoElement {
         let masked = state.presentation(cx).is_masked();
         Button::new("toggle-mask")
@@ -394,6 +530,17 @@ impl RenderOnce for Input {
         const LINE_HEIGHT: Rems = Rems(1.25);
         let text_align = self.style.text.text_align.unwrap_or(TextAlign::Left);
         let state = self.state.clone();
+        state.install_token_presentation(
+            Some(self.token_renderer.unwrap_or_else(|| {
+                Rc::new(|token, _, _| super::InputToken::new(token).into_any_element())
+            })),
+            self.token_click_listener,
+            matches!(
+                self.content_type,
+                Some(InputContentType::Password | InputContentType::NewPassword)
+            ),
+            cx,
+        );
         // Which kind of input this registers as follows from the state itself.
         sync_focused_input_registry(&state, window, cx);
 
@@ -507,7 +654,16 @@ impl RenderOnce for Input {
             }),
             cx,
         );
-        let overlays = state.render_overlays(window, cx);
+        // The engine ignores `Paste` on a read-only or disabled input; the hook
+        // must not see a paste the input itself would refuse.
+        let paste_handler = self
+            .paste_handler
+            .clone()
+            .filter(|_| state.presentation(cx).is_editable());
+        let mut overlays = state.render_overlays(window, cx);
+        overlays
+            .floating
+            .extend(Self::render_touch_selection(&state, window, cx));
 
         let presentation = state.presentation(cx);
         let content_type = self.content_type;
@@ -664,6 +820,15 @@ impl RenderOnce for Input {
             })
             .relative()
             .children(overlays.floating)
+            .when_some(paste_handler, |this, handler| {
+                this.capture_action(move |_: &gpui_base::input::Paste, window, cx| {
+                    if let Some(clipboard) = cx.read_from_clipboard() {
+                        if handler(&clipboard, window, cx) {
+                            cx.stop_propagation();
+                        }
+                    }
+                })
+            })
             .render(window, cx)
     }
 }
@@ -811,6 +976,28 @@ mod tests {
             RoleOverride::Role(Role::Button)
         );
         assert_eq!(RoleOverride::from(None), RoleOverride::Presentational);
+    }
+
+    #[gpui::test]
+    fn test_on_paste_builder(cx: &mut gpui::TestAppContext) {
+        use gpui::{AppContext as _, Render};
+
+        struct Probe;
+        impl Render for Probe {
+            fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+                div()
+            }
+        }
+
+        cx.update(crate::init);
+        let _ = cx.add_window_view(|window, cx| {
+            let state = cx.new(|cx| InputState::new(window, cx));
+
+            assert!(Input::new(&state).paste_handler.is_none());
+            let input = Input::new(&state).on_paste(|_, _, _| true);
+            assert!(input.paste_handler.is_some());
+            Probe
+        });
     }
 
     #[gpui::test]

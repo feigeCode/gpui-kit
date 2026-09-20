@@ -17,6 +17,13 @@ Every app starts with a UI font and a monospace font from the theme:
 The editor paints its code in `mono_font_family` at `mono_font_size`. See
 [Editor](../component/editor.md) for details.
 
+Both defaults are checked against the installed fonts when the theme is
+applied. A missing monospace default is swapped for an installed alternative,
+and when `.SystemUIFont` resolves to one of GPUI's fallback families rather
+than the system font itself (Linux desktops without the family GPUI maps it
+to), the theme names that family directly so text lookups stay cached. A
+family you set yourself is used as-is.
+
 ## System fonts
 
 Desktop apps can use **any font installed on the OS** by name — no bundling,
@@ -40,14 +47,14 @@ verify the exact family name on each target platform.
 
 ## Changing fonts via Theme
 
-Set the app-wide fonts on the `Theme` global, then sync to the base layer:
+Set the app-wide fonts through `Theme::update`, which syncs the base layer and refreshes every window:
 
 ```rust
-Theme::global_mut(cx).font_family = "Inter".into();
-Theme::global_mut(cx).mono_font_family = "JetBrains Mono".into();
-Theme::global_mut(cx).font_size = px(18.);
-Theme::sync_base(cx);
-window.refresh();
+Theme::update(cx, |theme| {
+    theme.font_family = "Inter".into();
+    theme.mono_font_family = "JetBrains Mono".into();
+    theme.font_size = px(18.);
+});
 ```
 
 `font_size` doubles as the application zoom control — `Root` calls
@@ -84,8 +91,7 @@ cx.text_system()
 Then reference them by family name as usual:
 
 ```rust
-Theme::global_mut(cx).font_family = "MyFont".into();
-Theme::sync_base(cx);
+Theme::update(cx, |theme| theme.font_family = "MyFont".into());
 ```
 
 The gallery's web build bundles `Inter`, `JetBrains Mono`, `Noto Sans SC` and
@@ -109,7 +115,7 @@ Load it with `ThemeRegistry`:
 ```rust
 ThemeRegistry::watch_dir(PathBuf::from("./themes"), cx, move |cx| {
     if let Some(theme) = ThemeRegistry::global(cx).themes().get(&theme_name).cloned() {
-        Theme::global_mut(cx).apply_config(&theme);
+        Theme::update(cx, |current| current.apply_config(&theme));
     }
 });
 ```

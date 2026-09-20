@@ -108,6 +108,7 @@ pub struct Editor {
 
     /// An optional palette that wins over the theme-derived one.
     editor_style: Option<EditorStyleOverrides>,
+    paste_handler: Option<Rc<dyn Fn(&gpui::ClipboardItem, &mut Window, &mut App) -> bool>>,
 }
 
 impl Editor {
@@ -125,6 +126,7 @@ impl Editor {
             aria_label: None,
             context_menu_builder: None,
             editor_style: None,
+            paste_handler: None,
         }
     }
 
@@ -196,6 +198,20 @@ impl Editor {
         self.editor_style = Some(style);
         self
     }
+
+    /// Intercept paste payloads (images, files) before the default text insertion.
+    ///
+    /// `true` consumes the paste so nothing is inserted, `false` falls through
+    /// to `clipboard.text()`. Copied files arrive as `ExternalPaths` through
+    /// the same hook. On web the clipboard reads `None`; image paste needs
+    /// async clipboard access and is out of scope.
+    pub fn on_paste(
+        mut self,
+        handler: impl Fn(&gpui::ClipboardItem, &mut Window, &mut App) -> bool + 'static,
+    ) -> Self {
+        self.paste_handler = Some(Rc::new(handler));
+        self
+    }
 }
 
 impl Styled for Editor {
@@ -227,6 +243,9 @@ impl RenderOnce for Editor {
                 this.context_menu(move |menu, window, cx| build(menu, window, cx))
             })
             .when_some(self.editor_style, |this, style| this.editor_style(style))
+            .when_some(self.paste_handler, |this, handler| {
+                this.on_paste(move |item, window, cx| handler(item, window, cx))
+            })
             .refine_style(&self.style)
     }
 }
@@ -604,6 +623,27 @@ mod tests {
                 state.replace_text_in_range(None, "!", window, cx);
                 assert_eq!(state.text().to_string(), "/*x*/!");
             });
+        });
+    }
+
+    #[gpui::test]
+    fn test_on_paste_builder(cx: &mut TestAppContext) {
+        use gpui::{AppContext as _, Render};
+
+        struct PasteProbe;
+        impl Render for PasteProbe {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+            }
+        }
+
+        cx.update(crate::init);
+        let _ = cx.add_window_view(|window, cx| {
+            let state = cx.new(|cx| EditorState::new(window, cx));
+            assert!(Editor::new(&state).paste_handler.is_none());
+            let editor = Editor::new(&state).on_paste(|_, _, _| true);
+            assert!(editor.paste_handler.is_some());
+            PasteProbe
         });
     }
 }

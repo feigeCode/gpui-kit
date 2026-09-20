@@ -13,6 +13,7 @@ mod sizing;
 mod styled;
 mod time;
 mod title_bar;
+mod touch_selection;
 mod virtual_list;
 mod window_border;
 mod window_ext;
@@ -61,6 +62,7 @@ pub mod pagination;
 pub mod plot;
 pub mod popover;
 pub mod progress;
+pub mod questionnaire;
 pub mod radio;
 pub mod rating;
 /// Backwards-compatible resizable component paths.
@@ -143,6 +145,7 @@ pub fn init(cx: &mut App) {
     carousel::init(cx);
     notification::init(cx);
     popover::init(cx);
+    questionnaire::init(cx);
     menu::init(cx);
     table::init(cx);
     tooltip::init(cx);

@@ -32,7 +32,16 @@ mod element;
 mod highlighting;
 #[path = "editor/indent.rs"]
 mod indent;
+#[path = "base/inline_tokens.rs"]
+mod inline_tokens;
 mod input;
+#[path = "base/token_presentation.rs"]
+mod token_presentation;
+pub use inline_tokens::{InlineToken, InlineTokenError, InlineTokenSpan, InputContent};
+pub(crate) use token_presentation::InlineTokenPresentation;
+pub use token_presentation::{
+    InlineTokenClickEvent, InlineTokenClickListener, InlineTokenContext, InlineTokenRenderer,
+};
 #[path = "base/kind.rs"]
 mod kind;
 #[path = "editor/language.rs"]
@@ -60,6 +69,8 @@ mod selection;
 #[path = "base/state.rs"]
 mod state;
 mod textarea;
+#[path = "base/touch.rs"]
+mod touch;
 #[path = "base/undo_manager.rs"]
 mod undo_manager;
 
