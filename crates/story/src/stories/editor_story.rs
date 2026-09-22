@@ -72,7 +72,7 @@ impl EditorStory {
             });
         }
 
-        let decoration_text = "Decoration styles\nColor highlights important text.\nItalic adds emphasis.\nUnderline marks review text.\n\nFill marks a tracked range.\n\nFrame outlines a tracked range.";
+        let decoration_text = "Decoration styles\nColor highlights important text.\nItalic adds emphasis.\nUnderline marks review text.\n\nFill: marks a tracked range.\n\nFrame: outlines a tracked range.";
         let decorations_state = cx.new(|cx| {
             EditorState::new(window, cx)
                 .language("text")
@@ -83,8 +83,8 @@ impl EditorStory {
         let color_range = "Color";
         let italic_range = "Italic";
         let underline_range = "Underline";
-        let fill_range = "Fill marks a tracked range.";
-        let frame_range = "Frame outlines a tracked range.";
+        let fill_range = "marks a tracked range.";
+        let frame_range = "outlines a tracked range.";
         let marker_start = decoration_text.find(marker).unwrap_or_default();
         let color_start = decoration_text.find(color_range).unwrap_or_default();
         let italic_start = decoration_text.find(italic_range).unwrap_or_default();

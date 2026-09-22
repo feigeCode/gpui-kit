@@ -722,6 +722,7 @@ impl<M: InputModeKind> TextElement<M> {
         last_layout: &LastLayout,
         bounds: &Bounds<Pixels>,
         window: &Window,
+        content_mask: Bounds<Pixels>,
         cx: &App,
     ) -> (Vec<(Path<Pixels>, Hsla)>, Vec<(Path<Pixels>, Hsla)>) {
         let state = self.state.read(cx);
@@ -768,6 +769,7 @@ impl<M: InputModeKind> TextElement<M> {
                         .collect::<Vec<_>>();
                     let (stroke_width, points) =
                         snap_frame_outline(&points, px(1.), window.scale_factor());
+                    let points = clamp_frame_to_content_mask(points, stroke_width, content_mask);
                     let Some(first) = points.first().copied() else {
                         continue;
                     };
@@ -1781,6 +1783,20 @@ fn snap_frame_outline(
     )
 }
 
+fn clamp_frame_to_content_mask(
+    points: Vec<Point<Pixels>>,
+    stroke_width: Pixels,
+    content_mask: Bounds<Pixels>,
+) -> Vec<Point<Pixels>> {
+    let half_width = stroke_width / 2.;
+    let min_x = content_mask.left() + half_width;
+    let max_x = (content_mask.right() - half_width).max(min_x);
+    points
+        .into_iter()
+        .map(|p| point(p.x.max(min_x).min(max_x), p.y))
+        .collect()
+}
+
 impl<M: InputModeKind> Element for TextElement<M> {
     type RequestLayoutState = ();
     type PrepaintState = PrepaintState;
@@ -2146,8 +2162,13 @@ impl<M: InputModeKind> Element for TextElement<M> {
         let hover_highlight_path = self.layout_hover_highlight(&last_layout, &mut bounds, cx);
         let document_color_paths =
             self.layout_document_colors(&document_colors, &last_layout, &bounds, cx);
-        let (range_decoration_fills, range_decoration_frames) =
-            self.layout_range_decorations(&last_layout, &bounds, window, cx);
+        let (range_decoration_fills, range_decoration_frames) = self.layout_range_decorations(
+            &last_layout,
+            &bounds,
+            window,
+            window.content_mask().bounds,
+            cx,
+        );
 
         let state = self.state.read(cx);
         let line_numbers = if state.mode.line_number() {
@@ -2906,6 +2927,7 @@ mod tests {
                 layout,
                 &state.input_bounds,
                 window,
+                state.input_bounds,
                 cx,
             );
             assert_eq!(fills.len(), 1);
@@ -3007,6 +3029,7 @@ mod tests {
                 layout,
                 &state.input_bounds,
                 window,
+                state.input_bounds,
                 cx,
             );
             assert!(fills.is_empty());
@@ -3041,6 +3064,7 @@ mod tests {
                     layout,
                     &state.input_bounds,
                     window,
+                    state.input_bounds,
                     cx,
                 );
                 assert!(frames.is_empty());
@@ -3192,6 +3216,29 @@ mod tests {
             assert_eq!(width, expected_width);
             assert_eq!(snapped, expected_points);
         }
+    }
+
+    #[test]
+    fn frame_outline_keeps_its_vertical_edges_inside_the_content_mask() {
+        let points = vec![
+            point(px(9.5), px(2.5)),
+            point(px(20.5), px(2.5)),
+            point(px(20.5), px(10.5)),
+            point(px(9.5), px(10.5)),
+            point(px(9.5), px(2.5)),
+        ];
+        let mask = Bounds::new(point(px(10.), px(0.)), size(px(10.), px(20.)));
+
+        assert_eq!(
+            clamp_frame_to_content_mask(points, px(1.), mask),
+            vec![
+                point(px(10.5), px(2.5)),
+                point(px(19.5), px(2.5)),
+                point(px(19.5), px(10.5)),
+                point(px(10.5), px(10.5)),
+                point(px(10.5), px(2.5)),
+            ]
+        );
     }
 
     #[test]
