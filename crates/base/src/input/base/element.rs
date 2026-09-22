@@ -721,6 +721,7 @@ impl<M: InputModeKind> TextElement<M> {
         &self,
         last_layout: &LastLayout,
         bounds: &Bounds<Pixels>,
+        window: &Window,
         cx: &App,
     ) -> (Vec<(Path<Pixels>, Hsla)>, Vec<(Path<Pixels>, Hsla)>) {
         let state = self.state.read(cx);
@@ -759,15 +760,21 @@ impl<M: InputModeKind> TextElement<M> {
                     else {
                         continue;
                     };
-                    let points = frame_outline_points(&corners);
+                    let origin = bounds.origin + point(last_layout.line_number_width, px(0.));
+                    let corners = pad_frame_corners(&corners, px(1.));
+                    let points = frame_outline_points(&corners)
+                        .into_iter()
+                        .map(|point| origin + point)
+                        .collect::<Vec<_>>();
+                    let (stroke_width, points) =
+                        snap_frame_outline(&points, px(1.), window.scale_factor());
                     let Some(first) = points.first().copied() else {
                         continue;
                     };
-                    let origin = bounds.origin + point(last_layout.line_number_width, px(0.));
-                    let mut builder = gpui::PathBuilder::stroke(px(1.));
-                    builder.move_to(origin + first);
+                    let mut builder = gpui::PathBuilder::stroke(stroke_width);
+                    builder.move_to(first);
                     for point in points.iter().skip(1) {
-                        builder.line_to(origin + *point);
+                        builder.line_to(*point);
                     }
                     builder.close();
                     if let Ok(path) = builder.build() {
@@ -1719,7 +1726,59 @@ fn frame_outline_points(corners: &[Corners<Point<Pixels>>]) -> Vec<Point<Pixels>
         points.push(point(next.0.x, current.0.y));
         points.push(point(next.0.x, next.0.y));
     }
+    if points.last() != points.first() {
+        points.push(points[0]);
+    }
     points
+}
+
+fn pad_frame_corners(
+    corners: &[Corners<Point<Pixels>>],
+    horizontal_padding: Pixels,
+) -> Vec<Corners<Point<Pixels>>> {
+    corners
+        .iter()
+        .map(|corners| Corners {
+            top_left: point(corners.top_left.x - horizontal_padding, corners.top_left.y),
+            top_right: point(
+                corners.top_right.x + horizontal_padding,
+                corners.top_right.y,
+            ),
+            bottom_left: point(
+                corners.bottom_left.x - horizontal_padding,
+                corners.bottom_left.y,
+            ),
+            bottom_right: point(
+                corners.bottom_right.x + horizontal_padding,
+                corners.bottom_right.y,
+            ),
+        })
+        .collect()
+}
+
+fn snap_frame_outline(
+    points: &[Point<Pixels>],
+    stroke_width: Pixels,
+    scale_factor: f32,
+) -> (Pixels, Vec<Point<Pixels>>) {
+    let physical_width = ((stroke_width.as_f32() * scale_factor).abs() - 0.5)
+        .ceil()
+        .max(1.);
+    let stroke_width = px(physical_width / scale_factor);
+    let center_offset = if physical_width % 2. == 0. { 0. } else { 0.5 };
+    let snap = |value: Pixels| {
+        px(
+            ((value.as_f32() * scale_factor - center_offset).round() + center_offset)
+                / scale_factor,
+        )
+    };
+    (
+        stroke_width,
+        points
+            .iter()
+            .map(|point| point.map(snap))
+            .collect::<Vec<_>>(),
+    )
 }
 
 impl<M: InputModeKind> Element for TextElement<M> {
@@ -2088,7 +2147,7 @@ impl<M: InputModeKind> Element for TextElement<M> {
         let document_color_paths =
             self.layout_document_colors(&document_colors, &last_layout, &bounds, cx);
         let (range_decoration_fills, range_decoration_frames) =
-            self.layout_range_decorations(&last_layout, &bounds, cx);
+            self.layout_range_decorations(&last_layout, &bounds, window, cx);
 
         let state = self.state.read(cx);
         let line_numbers = if state.mode.line_number() {
@@ -2846,6 +2905,7 @@ mod tests {
             let (fills, frames) = TextElement::new(editor.clone()).layout_range_decorations(
                 layout,
                 &state.input_bounds,
+                window,
                 cx,
             );
             assert_eq!(fills.len(), 1);
@@ -2946,6 +3006,7 @@ mod tests {
             let (fills, frames) = TextElement::new(editor.clone()).layout_range_decorations(
                 layout,
                 &state.input_bounds,
+                window,
                 cx,
             );
             assert!(fills.is_empty());
@@ -2979,6 +3040,7 @@ mod tests {
                 let (_, frames) = TextElement::new(editor.clone()).layout_range_decorations(
                     layout,
                     &state.input_bounds,
+                    window,
                     cx,
                 );
                 assert!(frames.is_empty());
@@ -3077,6 +3139,59 @@ mod tests {
                 point(px(2.), px(0.)),
             ]
         );
+    }
+
+    #[test]
+    fn frame_outline_keeps_horizontal_space_between_the_stroke_and_text() {
+        let corners = [Corners {
+            top_left: point(px(2.), px(0.)),
+            top_right: point(px(20.), px(0.)),
+            bottom_left: point(px(2.), px(10.)),
+            bottom_right: point(px(20.), px(10.)),
+        }];
+
+        assert_eq!(
+            pad_frame_corners(&corners, px(1.)),
+            vec![Corners {
+                top_left: point(px(1.), px(0.)),
+                top_right: point(px(21.), px(0.)),
+                bottom_left: point(px(1.), px(10.)),
+                bottom_right: point(px(21.), px(10.)),
+            }]
+        );
+
+        let points = frame_outline_points(&corners);
+        assert_eq!(points.first(), points.last());
+    }
+
+    #[test]
+    fn frame_outline_stroke_is_aligned_to_physical_pixels_at_each_scale_factor() {
+        let points = vec![point(px(0.2), px(1.8)), point(px(10.7), px(20.3))];
+
+        for (scale_factor, expected_width, expected_points) in [
+            (
+                1.,
+                px(1.),
+                vec![point(px(0.5), px(1.5)), point(px(10.5), px(20.5))],
+            ),
+            (
+                1.5,
+                px(2. / 3.),
+                vec![
+                    point(px(1. / 3.), px(5. / 3.)),
+                    point(px(11.), px(61. / 3.)),
+                ],
+            ),
+            (
+                2.,
+                px(1.),
+                vec![point(px(0.), px(2.)), point(px(10.5), px(20.5))],
+            ),
+        ] {
+            let (width, snapped) = snap_frame_outline(&points, px(1.), scale_factor);
+            assert_eq!(width, expected_width);
+            assert_eq!(snapped, expected_points);
+        }
     }
 
     #[test]
