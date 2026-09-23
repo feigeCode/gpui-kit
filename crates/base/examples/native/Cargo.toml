@@ -1,7 +1,7 @@
 [package]
 name = "gpui-base-examples"
 default-run = "components"
-version = "0.6.1"
+version = "0.6.5"
 publish = false
 edition.workspace = true
 
@@ -11,6 +11,9 @@ gpui-base = { path = "../.." }
 gpui_platform.workspace = true
 reqwest_client.workspace = true
 syntect.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
 
 [lints]
 workspace = true

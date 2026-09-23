@@ -16,7 +16,10 @@
  *    the `[lib]` name so `use gpui::*` keeps working.
  * 4. Drop optional dependencies that come from git without a crates.io
  *    version (crates.io rejects those), together with the features that
- *    enable them. Non-optional ones abort the run.
+ *    enable them. Non-optional ones abort the run. Relax exact `=x.y.z`
+ *    requirements on external crates to `^x.y.z`: an application may pin,
+ *    but a pinned library makes Cargo silently keep consumers on the
+ *    previous snapshot whenever their graph already holds a newer patch.
  * 5. Write a standalone workspace to `target/gpui-pre/workspace`. Every
  *    crate keeps Zed's `license`, copyright notices and `LICENSE-APACHE`,
  *    gets any `NOTICE` Zed ships, and the few files this script rewrites
@@ -26,7 +29,9 @@
  *    crate. Zed's own application crates are GPL-3.0-or-later, and one of
  *    them reaching the closure would change the terms for every consumer.
  * 7. Verify with `cargo publish --workspace --dry-run`, build and test
- *    gpui-kit against the staged crates, then publish.
+ *    gpui-kit against the staged crates, then publish. A gpui-kit failure
+ *    does not hold the snapshot back: it is reported (and recorded in
+ *    `gpui-pre.json`) so the repository can be adapted right after.
  *
  * crates.io only accepts a handful of brand-new crates per ten minutes. The
  * publish step re-checks crates.io before every attempt, skips versions that
@@ -60,6 +65,7 @@ import {
 } from "node:fs";
 import { dirname, join, normalize, relative, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
 /**
@@ -398,6 +404,8 @@ interface Crate {
   publishedName: string;
   prunedDeps: string[];
   prunedFeatures: string[];
+  /** External dependencies whose `=x.y.z` requirement was relaxed to `^x.y.z`. */
+  relaxedDeps: string[];
 }
 
 interface Workspace {
@@ -600,6 +608,7 @@ function collectClosure(ws: Workspace): Crate[] {
       publishedName: publishedName(name),
       prunedDeps: [],
       prunedFeatures: [],
+      relaxedDeps: [],
     };
   });
 }
@@ -889,6 +898,36 @@ const withoutSource = (spec: Toml) =>
     Object.entries(spec).filter(([k]) => !SOURCE_KEYS.includes(k)),
   );
 
+const EXACT_VERSION = /^\s*=\s*(\d[^\s,]*)\s*$/;
+
+/**
+ * Relax an exact `=x.y.z` requirement on an external dependency to `^x.y.z`.
+ *
+ * Zed pins the odd crate exactly (`unicode-properties = "=0.1.3"` in
+ * `gpui_web`, added by zed#64110) because it ships an application with its
+ * own lock file. Published as a library, that pin is hostile to resolution:
+ * a consumer whose graph already holds `unicode-properties 0.1.4` through
+ * another dependency makes Cargo back off the new snapshot to the previous
+ * one that carries no pin, with nothing louder than `patch … was not used`
+ * and `(available: v0.3.5)` to show for it. The caret still admits the pinned
+ * version, and a consumer that needs it can pin in its own lock file.
+ *
+ * Only external dependencies are relaxed; the `=<version>` the script sets
+ * between the republished crates is deliberate and never passes through here.
+ * Returns the unchanged spec when no exact requirement is present.
+ */
+function relaxExactVersion(spec: unknown): { spec: unknown; relaxed?: string } {
+  if (typeof spec === "string") {
+    const exact = EXACT_VERSION.exec(spec);
+    return exact === null ? { spec } : { spec: exact[1], relaxed: exact[1] };
+  }
+  if (isPlainObject(spec) && !spec.workspace && spec.path === undefined) {
+    const exact = typeof spec.version === "string" ? EXACT_VERSION.exec(spec.version) : null;
+    if (exact !== null) return { spec: { ...spec, version: exact[1] }, relaxed: exact[1] };
+  }
+  return { spec };
+}
+
 function crateManifest(
   crate: Crate,
   cratesByDir: Map<string, Crate>,
@@ -947,6 +986,13 @@ function crateManifest(
           version: `=${version}`,
           ...withoutSource(spec),
         };
+      } else {
+        const { spec: relaxedSpec, relaxed } = relaxExactVersion(spec);
+        if (relaxed !== undefined) {
+          entry = relaxedSpec;
+          if (!crate.relaxedDeps.includes(name)) crate.relaxedDeps.push(name);
+          logInfo(`${crate.name}: relaxed \`${name} = "=${relaxed}"\` to \`^${relaxed}\``);
+        }
       }
       rewritten[name] = entry;
     }
@@ -1005,7 +1051,10 @@ function workspaceManifest(
         ...withoutSource(spec),
       };
     } else {
-      dependencies[name] = spec;
+      const { spec: relaxedSpec, relaxed } = relaxExactVersion(spec);
+      if (relaxed !== undefined)
+        logInfo(`workspace: relaxed \`${name} = "=${relaxed}"\` to \`^${relaxed}\``);
+      dependencies[name] = relaxedSpec;
     }
   }
 
@@ -1098,6 +1147,7 @@ function stageWorkspace(
       path: c.relDir,
       dropped_dependencies: c.prunedDeps,
       dropped_features: c.prunedFeatures,
+      relaxed_dependencies: c.relaxedDeps,
     })),
   };
   writeFileSync(
@@ -1105,6 +1155,18 @@ function stageWorkspace(
     `${JSON.stringify(summary, null, 2)}\n`,
   );
   return staging;
+}
+
+/**
+ * Add the outcome of the gpui-kit compatibility check to `gpui-pre.json`, so
+ * the workflow summary can say whether the repository needs adapting.
+ */
+function recordKitCheck(failure: string | undefined) {
+  const path = join(WORK_DIR, "gpui-pre.json");
+  const summary = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+  summary.kit_check =
+    failure === undefined ? { passed: true } : { passed: false, error: failure };
+  writeFileSync(path, `${JSON.stringify(summary, null, 2)}\n`);
 }
 
 const FACADE_PATH_MODULE = "gpui_pre_facade_paths";
@@ -1447,6 +1509,43 @@ fn helper(input: TokenStream) -> TokenStream { input }
     if (snapshotRev(description) !== expected)
       throw new BumpError(`self-test read the wrong revision from \`${description}\``);
   }
+  for (const [input, expected] of [
+    ["=0.1.3", { spec: "0.1.3", relaxed: "0.1.3" }],
+    ["= 1.2.0-beta.1", { spec: "1.2.0-beta.1", relaxed: "1.2.0-beta.1" }],
+    ["0.1.3", { spec: "0.1.3" }],
+    [">=0.1, <0.2", { spec: ">=0.1, <0.2" }],
+    [
+      { version: "=0.1.3", features: ["general-category"] },
+      { spec: { version: "0.1.3", features: ["general-category"] }, relaxed: "0.1.3" },
+    ],
+    // The republished crates keep their exact pins, and workspace inheritance
+    // is resolved at the workspace table.
+    [{ path: "../gpui_util", version: "=0.3.5" }, { spec: { path: "../gpui_util", version: "=0.3.5" } }],
+    [{ workspace: true }, { spec: { workspace: true } }],
+  ] as const) {
+    const actual = relaxExactVersion(input);
+    if (JSON.stringify(actual) !== JSON.stringify(expected))
+      throw new BumpError(`self-test relaxed \`${JSON.stringify(input)}\` to \`${JSON.stringify(actual)}\``);
+  }
+  const workspaceFixture = [
+    'gpui = { package = "gpui-pre", version = "=0.3.6" }',
+    'gpui_platform = { package = "gpui-pre-platform", version = "=0.3.6", features = ["font-kit"] }',
+    '# gpui_web = { package = "gpui-pre-web", version = "=0.3.6" }',
+    'reqwest = { package = "gpui-pre-reqwest", version = "=0.12.15", default-features = false }',
+    'gpui_kit = { package = "gpui-kit", version = "=0.6.4" }',
+    'serde = { version = "1", features = ["derive"] }',
+    '[profile.dev.package]',
+    'gpui-pre = { opt-level = 3 }',
+  ].join("\n");
+  const snapshotCrates = ["gpui-pre", "gpui-pre-platform", "gpui-pre-web"].map(
+    (publishedName) => ({ publishedName }) as Crate,
+  );
+  const pinned = pinWorkspaceRequirements(workspaceFixture, snapshotCrates, "0.3.7");
+  const expectedPinned = workspaceFixture
+    .replace('"gpui-pre", version = "=0.3.6"', '"gpui-pre", version = "=0.3.7"')
+    .replace('"gpui-pre-platform", version = "=0.3.6"', '"gpui-pre-platform", version = "=0.3.7"');
+  if (pinned !== expectedPinned)
+    throw new BumpError(`self-test pinned the workspace to:\n${pinned}`);
   logSuccess("Facade-aware gpui_macros transformation self-test passed");
 }
 
@@ -1881,19 +1980,55 @@ function parseCommandLine(argv: string[]): Args {
 
 /**
  * Build and test this repository against the staged crates before anything is
- * uploaded. Applications depend on `gpui-pre` with a caret requirement, so a
- * snapshot whose API drifted away from `gpui-component` would reach them on
- * their next `cargo update`; this turns that into a failed release instead.
+ * uploaded. The workspace pins the snapshot crates to an exact version, so a
+ * snapshot whose API drifted away from `gpui-component` never reaches an
+ * application on its own; it reaches them through the gpui-kit release that
+ * bumps the pin, and this makes the drift visible on the release itself so
+ * that bump can carry the adaptation. The snapshot is published either way:
+ * the fix is a change to this repository, which can only land against the
+ * published crates, so the failure is returned to the caller as a warning
+ * rather than thrown.
  *
- * The staged crates are injected with `--config patch.crates-io…` so no file
- * in the repository changes. They are patched from a copy outside the
- * repository: a path dependency under the workspace root would be treated as
- * a member of this workspace and lose its own `workspace = true` inheritance.
- * Cargo keeps a locked version when it still satisfies the requirement, so
- * the published crates are moved to the staged version in a scratch copy of
- * `Cargo.lock`, which is restored afterwards.
+ * The staged crates are injected with `--config patch.crates-io…`, and the
+ * workspace's exact pins are moved onto the staged version for the duration
+ * of the check (a `[patch]` only applies to a source that satisfies the
+ * requirement); `Cargo.toml` is restored afterwards, so no file in the
+ * repository changes. They are patched from a git repository built
+ * around a copy outside the repository, not as path dependencies: Cargo
+ * treats a path dependency as local code and compiles it without
+ * `--cap-lints allow`, so a `RUSTFLAGS=-D warnings` job (the release
+ * workflow's toolchain action sets it) would promote Zed's own warnings, such
+ * as the deprecated `cocoa` types in `gpui_apple`, to errors that no
+ * consumer of the registry crates ever sees. Git dependencies get the same
+ * lint capping as registry ones, so the check mirrors what an application
+ * building against the published snapshot gets. The copy also has to live
+ * outside the repository: a path under the workspace root would be treated
+ * as a member of this workspace and lose its own `workspace = true`
+ * inheritance. Cargo keeps a locked version when it still satisfies the
+ * requirement, so the published crates are moved to the staged version in a
+ * scratch copy of `Cargo.lock`, which is restored afterwards.
  */
-async function verifyKitAgainstStaging(staging: string, crates: Crate[], version: string) {
+/**
+ * Move the workspace's exact requirements on the published crates onto
+ * `version`, keeping every other byte of the manifest as it is. Only
+ * `=x.y.z` requirements on a `package = "gpui-pre-…"` dependency that is part
+ * of this snapshot are rewritten; a hand-published crate such as
+ * `gpui-pre-reqwest` keeps its own pin.
+ */
+function pinWorkspaceRequirements(manifest: string, crates: Crate[], version: string): string {
+  const published = new Set(crates.map((crate) => crate.publishedName));
+  return manifest.replace(
+    /^([A-Za-z0-9_-]+\s*=\s*\{[^\n]*?\bpackage\s*=\s*"([^"]+)"[^\n]*?\bversion\s*=\s*")=[^"]+(")/gm,
+    (line, head: string, name: string, tail: string) =>
+      published.has(name) ? `${head}=${version}${tail}` : line,
+  );
+}
+
+async function verifyKitAgainstStaging(
+  staging: string,
+  crates: Crate[],
+  version: string,
+): Promise<string | undefined> {
   const mirror = join(tmpdir(), `${PUBLISH_PREFIX}-kit-check`);
   rmSync(mirror, { recursive: true, force: true });
   cpSync(staging, mirror, {
@@ -1902,12 +2037,22 @@ async function verifyKitAgainstStaging(staging: string, crates: Crate[], version
     // judged relative to the staging root, which itself lives under `target/`.
     filter: (path) => relative(staging, path).split("/")[0] !== "target",
   });
+  // Ignored files still belong to the mirror: the copy is what gets built, so
+  // nothing from a `.gitignore` Zed ships may be left out of the commit.
+  const git = ["git", "-c", "user.name=gpui-kit", "-c", "user.email=gpui-kit@localhost", "-c", "commit.gpgsign=false"];
+  await run([...git, "init", "-q", "-b", "main"], { cwd: mirror });
+  await run([...git, "add", "--all", "--force"], { cwd: mirror });
+  await run([...git, "commit", "-q", "-m", `gpui-pre ${version} kit check`], { cwd: mirror });
+  const mirrorUrl = pathToFileURL(mirror).href;
   const patches = crates.flatMap((crate) => [
     "--config",
-    `patch.crates-io.${crate.publishedName}.path=${JSON.stringify(join(mirror, crate.relDir))}`,
+    `patch.crates-io.${crate.publishedName}.git=${JSON.stringify(mirrorUrl)}`,
   ]);
   const lockPath = join(REPO_ROOT, "Cargo.lock");
   const lockBackup = existsSync(lockPath) ? readFileSync(lockPath) : undefined;
+  const manifestPath = join(REPO_ROOT, "Cargo.toml");
+  const manifestBackup = readFileSync(manifestPath, "utf8");
+  writeFileSync(manifestPath, pinWorkspaceRequirements(manifestBackup, crates, version));
   const locked = new Set(
     [...(lockBackup?.toString() ?? "").matchAll(/^name = "([^"]+)"$/gm)].map((m) => m[1]),
   );
@@ -1922,33 +2067,53 @@ async function verifyKitAgainstStaging(staging: string, crates: Crate[], version
 
     const metadata = JSON.parse(
       await run(["cargo", "metadata", "--format-version", "1", ...patches], { cwd: REPO_ROOT, capture: true }),
-    ) as { packages: { name: string; version: string; manifest_path: string }[] };
-    const foreign = crates
-      .map((crate) => metadata.packages.find((pkg) => pkg.name === crate.publishedName))
-      .filter((pkg): pkg is NonNullable<typeof pkg> => pkg !== undefined && !pkg.manifest_path.startsWith(mirror));
+    ) as { packages: { name: string; version: string; source: string | null }[] };
+    // A crate can appear twice when only part of the closure fell back to the
+    // registry (a dependency of a staged crate next to a registry copy), so
+    // every package of the name is inspected, not the first one found. A
+    // staged crate reports the mirror as its source (`git+file://…#sha`);
+    // Cargo checks the repository out under its own cache, so the manifest
+    // path says nothing about where a package came from.
+    const published = new Set(crates.map((crate) => crate.publishedName));
+    const foreign = metadata.packages.filter(
+      (pkg) => published.has(pkg.name) && !(pkg.source ?? "").startsWith(`git+${mirrorUrl}`),
+    );
     if (foreign.length > 0) {
-      const detail = foreign.map((pkg) => `${pkg.name} ${pkg.version} from ${pkg.manifest_path}`).join("\n  ");
+      const detail = foreign.map((pkg) => `${pkg.name} ${pkg.version} from ${pkg.source ?? "this workspace"}`).join("\n  ");
       throw new BumpError(
-        `the workspace did not resolve to the staged ${version}; its Cargo.toml requirement rejects it:\n  ${detail}`,
+        `the workspace resolved these crates from the registry instead of the staged ${version}:\n  ${detail}\n` +
+          "Either the workspace's Cargo.toml requirement excludes the new version, or a " +
+          "dependency of the staged crates conflicts with what the workspace already " +
+          "resolves (an exact `=x.y.z` pin, a missing feature); Cargo then quietly backs " +
+          "off to the previous registry version. The `patch … was not used` warnings and " +
+          "`(available: v…)` notes above show which crates fell back.",
       );
     }
 
-    // The same commands the repository's CI runs.
+    // The same commands the repository's CI runs. Clippy stays scoped to the
+    // crates this repository publishes; `--no-deps` keeps it off the staged
+    // crates, whose warnings are Zed's to fix.
     const commands = [
       ["cargo", "check", ...patches, "--workspace", "--all-targets"],
-      ["cargo", "clippy", ...patches, "-p", "gpui-component", "-p", "gpui-component-story", "-p", "gpui-kit-assets", "-p", "gpui-kit", "--", "--deny", "warnings"],
+      ["cargo", "clippy", ...patches, "--no-deps", "-p", "gpui-component", "-p", "gpui-component-story", "-p", "gpui-kit-assets", "-p", "gpui-kit", "--", "--deny", "warnings"],
       ["cargo", "test", ...patches, "--workspace", "--exclude", "gpui-shell", "--features", "gpui-component-story/test-support"],
     ];
     for (const cmd of commands) {
       const { code } = await runStreaming(cmd, REPO_ROOT);
       if (code !== 0) {
-        throw new BumpError(
-          `gpui-kit does not build or pass its tests against the staged gpui-pre ${version}; ` +
-            "adapt the repository to the Zed changes before publishing",
+        return (
+          `gpui-kit does not build or pass its tests against gpui-pre ${version} ` +
+          `(\`${cmd.filter((arg, i) => arg !== "--config" && cmd[i - 1] !== "--config").join(" ")}\` failed); ` +
+          "adapt the repository to the Zed changes"
         );
       }
     }
+    return undefined;
+  } catch (error) {
+    if (error instanceof BumpError) return error.message;
+    throw error;
   } finally {
+    writeFileSync(manifestPath, manifestBackup);
     if (lockBackup !== undefined) writeFileSync(lockPath, lockBackup);
     else if (existsSync(lockPath)) rmSync(lockPath);
   }
@@ -2039,12 +2204,23 @@ async function main(argv: string[]): Promise<number> {
   }
   console.log();
 
+  let kitCheckFailure: string | undefined;
   if (args.skipKitCheck) {
     logWarn("Skipping the gpui-kit compatibility check (--skip-kit-check)");
   } else {
     logStep(`6/${totalSteps}`, "Building and testing gpui-kit against the staged crates");
-    await verifyKitAgainstStaging(staging, crates, version);
-    logSuccess(`gpui-kit builds and passes its tests against gpui-pre ${version}`);
+    kitCheckFailure = await verifyKitAgainstStaging(staging, crates, version);
+    recordKitCheck(kitCheckFailure);
+    if (kitCheckFailure === undefined) {
+      logSuccess(`gpui-kit builds and passes its tests against gpui-pre ${version}`);
+    } else {
+      // The snapshot ships regardless: the repository can only be adapted
+      // against the published crates, so holding the release back would
+      // leave nothing to adapt to.
+      logWarn(`${kitCheckFailure}; publishing anyway`);
+      if (process.env.GITHUB_ACTIONS !== undefined)
+        console.log(`::warning title=gpui-kit needs adapting to gpui-pre ${version}::${kitCheckFailure}`);
+    }
   }
   console.log();
   if (args.dryRun) {
@@ -2062,6 +2238,10 @@ async function main(argv: string[]): Promise<number> {
   );
   console.log(paint("1;32", `╚${"═".repeat(56)}╝`));
   console.log();
+  if (kitCheckFailure !== undefined) {
+    logWarn(`gpui-kit still needs adapting: ${kitCheckFailure}`);
+    console.log();
+  }
   console.log("Depend on it with:");
   console.log();
   console.log("    [workspace.dependencies]");

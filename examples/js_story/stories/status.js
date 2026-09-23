@@ -32,6 +32,7 @@ export const REGISTERED_SURFACES = [
   "Icon",
   "Image",
   "Input",
+  "InputGroup",
   "Kbd",
   "Label",
   "Link",
@@ -47,6 +48,7 @@ export const REGISTERED_SURFACES = [
   "Pagination",
   "Popover",
   "Progress",
+  "Questionnaire",
   "Radio",
   "Rating",
   "Resizable",
@@ -71,6 +73,7 @@ export const REGISTERED_SURFACES = [
   "Textarea",
   "Stepper",
   "Toggle",
+  "Toolbar",
   "Tooltip",
   "Tree",
 ];

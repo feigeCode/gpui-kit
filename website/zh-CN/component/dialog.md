@@ -16,35 +16,9 @@ use gpui_kit::component::WindowExt;
 
 ## 用法
 
-### 在应用根视图中渲染 Dialog 图层
+### 对话框的渲染位置
 
-如果你要展示对话框，需要在应用根视图中渲染 dialog layer。通常这会放在主应用结构体的 `render` 方法里。
-
-[Root::render_dialog_layer](https://docs.rs/gpui-component/latest/gpui_component/struct.Root.html#method.render_dialog_layer) 会把当前激活的对话框渲染在应用内容之上。
-
-```rust
-use gpui_kit::component::TitleBar;
-
-struct MyApp {
-    view: AnyView,
-}
-
-impl Render for MyApp {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let dialog_layer = Root::render_dialog_layer(window, cx);
-
-        div()
-            .size_full()
-            .child(
-                v_flex()
-                    .size_full()
-                    .child(TitleBar::new())
-                    .child(div().flex_1().overflow_hidden().child(self.view.clone())),
-            )
-            .children(dialog_layer)
-    }
-}
-```
+窗口的 [Root](./root.md) 会自动挂载并渲染对话框层。使用 `gpui_kit::open_window` 打开窗口，或将应用视图包裹在 `Root::new` 中即可，无需在视图中手动渲染浮层。
 
 ### 基础对话框
 
@@ -117,6 +91,10 @@ window.open_dialog(cx, |dialog, window, cx| {
 })
 ```
 
+Dialog 不会超出窗口。宽度最多为视口宽度减去两侧各 16px 的边距，高度最多为顶部偏移到底部
+16px 边距之间的空间，因此标题和底部操作区始终可见，正文在内部滚动。`w`、`max_w`、`h` 和
+`margin_top` 在这些限制内生效；本来就放得下的 Dialog 会保持其设定尺寸和默认位置。
+
 ### 常用选项
 
 ```rust
@@ -130,6 +108,10 @@ window.open_dialog(cx, |dialog, _, _| {
         .child("Dialog content")
 })
 ```
+
+### 操作按钮
+
+`Dialog` 自己的按钮放在 [`footer`](#dialogfooter) 里并派发 `Confirm` / `Cancel`；`on_ok`、`on_cancel` 决定 Enter 与 Esc 的行为。需要默认按钮的确认框请用 [AlertDialog](./alert-dialog.md)。
 
 ### 嵌套对话框
 

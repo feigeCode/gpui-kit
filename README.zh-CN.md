@@ -8,7 +8,8 @@
 
 GPUI Kit 是一个综合性的 Rust 桌面应用开发框架。它将生产级 UI
 系统、应用级数据与布局能力、编辑能力，以及可复用的行为、状态和基础设施整合在一起，
-并让交付后的应用可以被 JavaScript 扩展。
+并让交付后的应用可以被 JavaScript 扩展。GPUI Kit 提供 75+ 个有完整文档的组件与原语，
+并具备 WebAssembly、AccessKit 无障碍、UI 集成测试及可选的 JavaScript 扩展运行时。
 
 文档：<https://gpui-kit.com>
 
@@ -22,14 +23,17 @@ gpui-kit             应用唯一需要依赖的 crate
 
 ## 特性
 
-- **60+ 组件**：覆盖表单、导航、浮层、反馈和布局等场景，提供成熟交互与高效默认值。
+- **75+ 组件与原语**：覆盖表单、导航、浮层、数据展示、编辑、反馈和布局等场景，提供成熟交互与高效默认值。
 - **生产就绪**：从第一天起用于构建 Longbridge Pro，并在公开发布的商业桌面应用中持续打磨。
+- **WebAssembly**：应用与组件示例可通过 `wasm32-unknown-unknown` 在 Web 中运行。
+- **无障碍**：交互层内置 AccessKit role、name、state、relationship 与 action，并有对应测试覆盖。
+- **UI 集成测试**：在 headless window 中渲染真实组件，驱动鼠标与键盘输入，并验证状态、Focus、布局和无障碍信息。
 - **原生体验**：现代控件设计灵感来自 macOS 与 Windows，并提供语义化主题和多种尺寸。
 - **120 FPS**：GPU 加速界面，在高负载下依然保持流畅。
 - **数据表格**：虚拟滚动、固定列、列宽调整、排序与单元格选择，可承载数十万行数据。
 - **虚拟列表**：只渲染可见区域，并支持不同尺寸的列表项。
 - **代码编辑器**：20 万行规模下仍保持稳定，集成 Tree-sitter 高亮与 LSP 诊断、补全和悬浮提示。
-- **Dock 布局**：可调整面板、可拖拽标签、嵌套分割、边缘停靠，以及可序列化的 Tiles 自由布局。
+- **Dock 布局**：可调整面板、可拖拽标签、嵌套分割、边缘停靠，并可序列化保存。
 - **丰富内容**：原生 Markdown 与 HTML 渲染、语法高亮和内置图表。
 - **设计自由**：使用完整视觉系统，或基于 `gpui-base` 的行为与基础设施构建自己的系统。
 - **JavaScript 扩展**：`gpui-shell` 让已发布的 Rust 宿主以脚本方式加载面板与业务逻辑，每项能力都需显式授予。
@@ -132,18 +136,15 @@ fn main() {
         // 使用任何 GPUI Component 功能之前必须先调用此函数。
         gpui_kit::init(cx);
 
-        cx.spawn(async move |cx| {
-            cx.open_window(WindowOptions::default(), |window, cx| {
-                let view = cx.new(|_| HelloWorld);
-                // 窗口的第一层应该是一个 Root。
-                cx.new(|cx| Root::new(view, window, cx))
-            })
-            .expect("Failed to open window");
+        gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
+            cx.new(|_| HelloWorld)
         })
-        .detach();
+        .expect("Failed to open window");
     });
 }
 ```
+
+`gpui_kit::open_window` 是应用的窗口启动入口，始终挂载 Base `Root`。Component 初始化时注册窗口展示与浮层扩展；Cargo feature 不会选择不同的根类型。
 
 ### 图标
 
@@ -159,7 +160,7 @@ npx skills add longbridge/gpui-kit
 
 | 技能                     | 描述                                                                                                          |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------- |
-| `gpui-kit`               | 初始化、组件目录、常用使用模式、GPUI 机制（Element、Entity、异步、焦点、Actions、测试），以及 Coding Guides。 |
+| `gpui-kit`               | 初始化、组件目录、常用使用模式、GPUI 机制（Element、Entity、异步、Focus、Action、测试），以及 Coding Guides。 |
 | `gpui-kit-design-guides` | Design Guides：布局、间距、层级、交互状态、浮层与界面文案的规范。                                             |
 
 ## Development

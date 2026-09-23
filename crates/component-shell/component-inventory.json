@@ -464,6 +464,50 @@
         "exports": [
           "Input"
         ],
+        "related": [
+          {
+            "descriptor": "InputGroup",
+            "exports": [
+              "InputGroup"
+            ],
+            "role": "companion-control"
+          },
+          {
+            "descriptor": "InputGroupAddon",
+            "exports": [
+              "InputGroupAddon"
+            ],
+            "role": "named-slot-part"
+          },
+          {
+            "descriptor": "InputGroupButton",
+            "exports": [
+              "InputGroupButton"
+            ],
+            "role": "named-slot-part"
+          },
+          {
+            "descriptor": "InputGroupInput",
+            "exports": [
+              "InputGroupInput"
+            ],
+            "role": "named-slot-part"
+          },
+          {
+            "descriptor": "InputGroupTextarea",
+            "exports": [
+              "InputGroupTextarea"
+            ],
+            "role": "named-slot-part"
+          },
+          {
+            "descriptor": "InputGroupText",
+            "exports": [
+              "InputGroupText"
+            ],
+            "role": "named-slot-part"
+          }
+        ],
         "states": [
           {
             "export": "InputState",
@@ -636,6 +680,41 @@
         "descriptor": "Progress",
         "exports": [
           "Progress"
+        ]
+      }
+    },
+    {
+      "source": "ui",
+      "name": "questionnaire",
+      "classification": "component",
+      "registration": {
+        "status": "registered",
+        "descriptor": "Questionnaire",
+        "exports": [
+          "Questionnaire"
+        ],
+        "related": [
+          {
+            "descriptor": "QuestionnaireItem",
+            "exports": [
+              "QuestionnaireItem"
+            ],
+            "role": "typed-item"
+          },
+          {
+            "descriptor": "QuestionnaireChoice",
+            "exports": [
+              "QuestionnaireChoice"
+            ],
+            "role": "typed-item"
+          },
+          {
+            "descriptor": "QuestionnaireInput",
+            "exports": [
+              "QuestionnaireInput"
+            ],
+            "role": "typed-item"
+          }
         ]
       }
     },
@@ -1044,6 +1123,18 @@
       "name": "theme",
       "classification": "infrastructure",
       "explanation": "Non-renderable theme infrastructure is consumed by registered controls."
+    },
+    {
+      "source": "ui",
+      "name": "toolbar",
+      "classification": "component",
+      "registration": {
+        "status": "registered",
+        "descriptor": "Toolbar",
+        "exports": [
+          "Toolbar"
+        ]
+      }
     },
     {
       "source": "ui",
@@ -1648,6 +1739,67 @@
     },
     {
       "source": "story",
+      "name": "input_group",
+      "classification": "component",
+      "registration": {
+        "status": "registered",
+        "descriptor": "InputGroup",
+        "exports": [
+          "InputGroup"
+        ],
+        "related": [
+          {
+            "descriptor": "InputGroupAddon",
+            "exports": [
+              "InputGroupAddon"
+            ],
+            "role": "named-slot-part"
+          },
+          {
+            "descriptor": "InputGroupButton",
+            "exports": [
+              "InputGroupButton"
+            ],
+            "role": "named-slot-part"
+          },
+          {
+            "descriptor": "InputGroupInput",
+            "exports": [
+              "InputGroupInput"
+            ],
+            "role": "named-slot-part"
+          },
+          {
+            "descriptor": "InputGroupTextarea",
+            "exports": [
+              "InputGroupTextarea"
+            ],
+            "role": "named-slot-part"
+          },
+          {
+            "descriptor": "InputGroupText",
+            "exports": [
+              "InputGroupText"
+            ],
+            "role": "named-slot-part"
+          }
+        ],
+        "states": [
+          {
+            "export": "InputState",
+            "kind": "InputState",
+            "role": "retained-single-line-state"
+          },
+          {
+            "export": "TextareaState",
+            "kind": "TextareaState",
+            "role": "retained-multi-line-state"
+          }
+        ]
+      }
+    },
+    {
+      "source": "story",
       "name": "input",
       "classification": "component",
       "registration": {
@@ -1848,6 +2000,41 @@
         "descriptor": "Progress",
         "exports": [
           "Progress"
+        ]
+      }
+    },
+    {
+      "source": "story",
+      "name": "questionnaire",
+      "classification": "component",
+      "registration": {
+        "status": "registered",
+        "descriptor": "Questionnaire",
+        "exports": [
+          "Questionnaire"
+        ],
+        "related": [
+          {
+            "descriptor": "QuestionnaireItem",
+            "exports": [
+              "QuestionnaireItem"
+            ],
+            "role": "typed-item"
+          },
+          {
+            "descriptor": "QuestionnaireChoice",
+            "exports": [
+              "QuestionnaireChoice"
+            ],
+            "role": "typed-item"
+          },
+          {
+            "descriptor": "QuestionnaireInput",
+            "exports": [
+              "QuestionnaireInput"
+            ],
+            "role": "typed-item"
+          }
         ]
       }
     },
@@ -2274,6 +2461,18 @@
         "descriptor": "Toggle",
         "exports": [
           "Toggle"
+        ]
+      }
+    },
+    {
+      "source": "story",
+      "name": "toolbar",
+      "classification": "component",
+      "registration": {
+        "status": "registered",
+        "descriptor": "Toolbar",
+        "exports": [
+          "Toolbar"
         ]
       }
     },

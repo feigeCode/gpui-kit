@@ -34,7 +34,7 @@ impl Render for AppView {
 }
 ```
 
-If the application already calls `gpui_kit::component::init`, Base initialization is included. `gpui-component::Root` also installs the window selection layer.
+If the application already calls `gpui_kit::component::init`, Base initialization is included. A window using `gpui_base::Root`—including one opened by `gpui_kit::open_window`—installs the selection layer automatically; do not render a second layer in its content.
 
 TextView is selectable by default. While dragging a selection near a viewport edge, the shared selection layer scrolls the related `overflow_*_scroll` region automatically; no TextView scroll or selection parameter is required. Use `.selectable(false)` only to disable selection explicitly.
 
@@ -71,6 +71,18 @@ let style = TextViewStyle::default()
     .with_selection(app_colors.selection);
 
 TextView::markdown("themed", source).style(style)
+```
+
+Heading refinements receive the Markdown heading level (1-6) and are applied
+on top of the built-in size, weight, and spacing for that level:
+
+```rust
+use gpui_kit::{StyleRefinement, Styled as _, rems};
+
+let style = TextViewStyle::default().with_heading(|level| match level {
+    1 => StyleRefinement::default().pt(rems(1.)).pb(rems(0.75)),
+    _ => StyleRefinement::default(),
+});
 ```
 
 `TextViewStyle::from_theme(&theme)` maps the semantic colors from a `gpui_kit::base::Theme`. Applications using the higher-level component theme can use `gpui_kit::component::text::text_view_style(cx.theme())`.
@@ -203,6 +215,35 @@ TextView::new(&document)
 // Later
 document.update(cx, |state, cx| state.set_text(updated_source, cx));
 ```
+
+`TextViewMotion` is the view's motion policy. Base plays it but ships no
+timing: every duration defaults to zero, so an unstyled view adopts streamed
+text at once. Give `stream_fade` a duration to fade the text an update
+appends in where it lands, and optionally `stream_fade_stagger` to start
+each further word of one update a little after the one before it:
+
+```rust
+use std::time::Duration;
+
+use gpui_kit::base::{Easing, TextView, TextViewMotion};
+
+TextView::new(&document).motion(
+    TextViewMotion::default()
+        .with_stream_fade(Duration::from_millis(350))
+        .with_stream_fade_stagger(Duration::from_millis(30))
+        .with_stream_fade_easing(Easing::EaseOut),
+)
+```
+
+Without a stagger each update fades as one chunk. With one, appended text is
+split into words with their trailing whitespace, and CJK text into
+characters; a long update compresses its stagger so the last word starts
+within one fade. The tracker compares rendered text rather than source
+bytes, so a `set_text` whose text extends the current one counts as an
+append, and Markdown that completes as it streams (`**bo` becoming bold
+`bold`) fades the changed glyphs rather than the whole paragraph. Only the
+blocks the update reaches are compared, and frames are requested only while
+something is still fading. Reduced motion skips the fade.
 
 Selection can copy rendered text or Markdown source through `SelectionFormat`. Link routing, code-block actions, table actions, images, and custom Markdown plugins use the same builders as the compatibility API documented on the [gpui-component TextView page](../component/text-view.md).
 

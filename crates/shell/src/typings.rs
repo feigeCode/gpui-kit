@@ -215,6 +215,7 @@ pub(crate) fn declarations_with_components(components: &crate::FrozenComponentRe
     out.push_str("  /** The fluent builder returned by native and Base element factories. */\n");
     out.push_str("  export interface NativeElement {\n");
     out.push_str(ELEMENT_METHODS);
+    out.push_str("    token(render: (token: import(\"gpui-base\").InlineTokenContext, cx: Context) => Element | null): this;\n    on_token_click(listener: (event: import(\"gpui-base\").InlineTokenClickEvent, cx: Context) => void): this;\n");
     out.push_str(&parametric_styles(&parametric));
     out.push_str(&nullary_styles(&nullary));
     out.push_str("  }\n");
@@ -228,15 +229,23 @@ pub(crate) fn declarations_with_components(components: &crate::FrozenComponentRe
     out.push_str(BASE_IMPORTS);
     out.push_str(&base_color_token_type());
     out.push_str(BASE_SHARED_TYPES);
+    out.push_str(INLINE_TOKEN_TYPES);
     out.push_str(BASE);
     out.push_str("}\n\n");
     out.push_str("declare module \"gpui-component\" {\n");
     out.push_str("  import { ClickEvent, Context, Element, NativeElement } from \"gpui-kit\";\n");
+    out.push_str(INLINE_TOKEN_TYPES);
     for state in components.states() {
         push_jsdoc(&mut out, state.documentation(), None, "  ");
         out.push_str("  export interface ");
         out.push_str(state.kind());
-        out.push_str(" { readonly __gpuiComponentState: unique symbol }\n");
+        out.push_str(" { readonly __gpuiComponentState: unique symbol");
+        for method in state.methods() {
+            out.push_str(";\n    ");
+            out.push_str(method.name());
+            out.push_str(method.signature());
+        }
+        out.push_str(" }\n");
         push_jsdoc(&mut out, state.documentation(), None, "  ");
         out.push_str("  export function ");
         out.push_str(state.export());
@@ -1913,8 +1922,8 @@ const ELEMENT_METHODS: &str = r#"    /**
      * stood. A command carries no script value: it names a container in the
      * area and what to ask it, and base does the work.
      *
-     * Every command takes the object its handler was given — the group, the
-     * dock, the tile — as its first argument. They belong on a `div`, an
+     * Every command takes the object its handler was given — the group or the
+     * dock — as its first argument. They belong on a `div`, an
      * `h_flex` or a `v_flex`; a `Button` builds its own interior and has
      * nowhere to put one.
      */
@@ -1941,19 +1950,6 @@ const ELEMENT_METHODS: &str = r#"    /**
      * area and the opposite dock, so nothing here has to.
      */
     resize_dock<Self extends Element>(this: Self, dock: import("gpui-base").DockRegion): Self;
-    /** Drags the tile around its canvas, raising it first. */
-    move_tile<Self extends Element>(this: Self, tile: import("gpui-base").DockTile): Self;
-    /** Drags one edge or corner of the tile. */
-    resize_tile<Self extends Element>(this: Self,
-      tile: import("gpui-base").DockTile,
-      side: import("gpui-base").TileResizeSide,
-    ): Self;
-    /** Brings the tile above the others when this element is pressed. */
-    raise_tile<Self extends Element>(this: Self, tile: import("gpui-base").DockTile): Self;
-    /** Zooms the tile to fill its dock, or back out. */
-    toggle_tile_zoom<Self extends Element>(this: Self, tile: import("gpui-base").DockTile): Self;
-    /** Closes the tile. */
-    close_tile<Self extends Element>(this: Self, tile: import("gpui-base").DockTile): Self;
 "#;
 
 fn shell_types() -> String {
@@ -2341,6 +2337,22 @@ const WINDOW: &str = r#"
 /// Everything `gpui-base` provides: its layout helpers, its components and its
 /// theme. Emitted into `declare module "gpui-base"`, so an import says which
 /// layer a script is reaching for.
+const INLINE_TOKEN_TYPES: &str = r#"
+  /** Half-open JavaScript UTF-16 string offsets, as used by slice(). */
+  export interface InputRange { start: number; end: number }
+  export interface InlineToken { id: string; text: string; label?: string }
+  export interface InlineTokenSpan { range: InputRange; token: InlineToken }
+  export interface InputContent { text: string; tokens: InlineTokenSpan[] }
+  export interface InlineTokenContext extends InlineTokenSpan {
+    selected: boolean; disabled: boolean; readonly: boolean;
+    line_height: number; available_width: number;
+  }
+  export interface InlineTokenClickEvent extends InlineTokenSpan {
+    bounds: { x: number; y: number; width: number; height: number };
+    modifiers: { shift: boolean; alt: boolean; control: boolean; platform: boolean };
+  }
+"#;
+
 const BASE: &str = r#"  /** A row. */
   export function h_flex(): NativeElement;
   /** A column. */
@@ -2985,8 +2997,15 @@ const BASE: &str = r#"  /** A row. */
    * an event handler — never in `render`.
    */
   export interface InputState {
+    content(): InputContent;
+    tokens(): InlineTokenSpan[];
+    replace_with_token(token: InlineToken): void;
+    replace_range_with_token(range: InputRange, token: InlineToken): void;
+    set_selected_range(range: InputRange): void;
+    replace(text: string): void;
     value(): string;
-    set_value(next: string): void;
+    /** Plain text, or a content snapshot to restore its tokens as well. */
+    set_value(next: string | InputContent): void;
     /** `change`, `submit`, `focus` or `blur`. */
     on(event: "change" | "submit" | "focus" | "blur", handler: (event: InputEvent, cx: Context) => void): boolean;
     /**
@@ -3045,8 +3064,15 @@ const BASE: &str = r#"  /** A row. */
    * call `set_auto_grow(...)`, or size the element with `.h(...)`.
    */
   export interface TextareaState {
+    content(): InputContent;
+    tokens(): InlineTokenSpan[];
+    replace_with_token(token: InlineToken): void;
+    replace_range_with_token(range: InputRange, token: InlineToken): void;
+    set_selected_range(range: InputRange): void;
+    replace(text: string): void;
     value(): string;
-    set_value(next: string): void;
+    /** Plain text, or a content snapshot to restore its tokens as well. */
+    set_value(next: string | InputContent): void;
     /** `change`, `submit`, `focus` or `blur`. */
     on(event: "change" | "submit" | "focus" | "blur", handler: (event: InputEvent, cx: Context) => void): boolean;
     /** Shows this many rows. */
@@ -3291,23 +3317,6 @@ const BASE: &str = r#"  /** A row. */
     readonly collapsible: boolean;
   }
 
-  /** One tile of a tiles canvas, as the two tile handlers are given it. */
-  export interface DockTile {
-    readonly node: number;
-    readonly panel: { readonly name: string; readonly id: number; readonly visible: boolean };
-    /**
-     * Already resolved — base snaps, clamps and rounds before a skin sees
-     * them, so nothing here has to be positioned by hand.
-     */
-    readonly bounds: import("gpui-shell").ElementBounds;
-    readonly z_index: number;
-    readonly moving: boolean;
-    readonly resizing: boolean;
-    readonly closable: boolean;
-    readonly zoomed: boolean;
-    readonly zoomable: boolean;
-  }
-
   /** Where a dragged panel would land, as the `drop_indicator` handler is given it. */
   export interface DockDrop {
     /** `null` means the drop merges into the group's tabs rather than splitting beside it. */
@@ -3331,11 +3340,6 @@ const BASE: &str = r#"  /** A row. */
     placement?: DockPlacement;
     /** Seeds the dock's extent when the panel is the first thing in it. */
     size?: number;
-    /**
-     * Places the panel on the region's tiles canvas instead of in a tab group.
-     * A region with no canvas has nowhere to put a tile, so nothing happens.
-     */
-    bounds?: { x: number; y: number; width: number; height: number };
     /** Default `true`. */
     closable?: boolean;
     /** Default `true`. */
@@ -3345,7 +3349,7 @@ const BASE: &str = r#"  /** A row. */
   }
 
   /**
-   * A dockable layout: splits, tab groups, docks and tiles that the user can
+   * A dockable layout: splits, tab groups and docks that the user can
    * rearrange, and that survives a restart.
    *
    * Retained for a reason none of the other handles share. **The layout is what
@@ -3403,15 +3407,14 @@ const BASE: &str = r#"  /** A row. */
     dock_size(placement: DockPlacement): number | null;
     set_dock_size(placement: DockPlacement, size: number): void;
     set_dock_collapsible(placement: DockPlacement, collapsible: boolean): void;
-    /** A locked area cannot be rearranged or dropped into; dock and tile resizing stays available. */
+    /** A locked area cannot be rearranged or dropped into; dock resizing stays available. */
     is_locked(): boolean;
     set_locked(locked: boolean): void;
     is_zoomed(): boolean;
     /** Clears the zoom, whichever container holds it. */
     zoom_out(): void;
     /**
-     * Fires on every edit — including each step of a tile drag — so save on a
-     * timer rather than on every one.
+     * Fires on every edit, so save on a timer rather than on every one.
      */
     on(event: "layout_changed", handler: (cx: Context) => void): boolean;
     release(): boolean;
@@ -3452,9 +3455,8 @@ const BASE: &str = r#"  /** A row. */
    * so unchanged frames do not enter JavaScript. It may not register event
    * handlers — cached chrome has no script callback lifecycle of its own — so
    * the elements it returns say what they do with a **command** instead:
-   * `select_tab(group, i)`, `close_panel(group, id)`, `toggle_dock(dock)`,
-   * `move_tile(tile)` and the rest. A command carries no script value, and base
-   * does the work.
+   * `select_tab(group, i)`, `close_panel(group, id)`, `toggle_dock(dock)` and
+   * the rest. A command carries no script value, and base does the work.
    */
   export function dock_area(area: DockArea): DockAreaElement;
 
@@ -3471,13 +3473,6 @@ const BASE: &str = r#"  /** A row. */
      * `dock_content()` where the panels belong.
      */
     dock(handler: (dock: DockRegion, cx: Context) => Element | null): DockAreaElement;
-    /**
-     * The strip a tile is dragged by. Its height is fixed at base's drag-bar
-     * height, which the snapping arithmetic assumes.
-     */
-    tile_drag_bar(handler: (tile: DockTile, cx: Context) => Element): DockAreaElement;
-    /** A tile's resize affordances. */
-    tile_resize_handles(handler: (tile: DockTile, cx: Context) => Element | null): DockAreaElement;
   }
 
   /**
@@ -3485,9 +3480,6 @@ const BASE: &str = r#"  /** A row. */
    * around them. Legal only inside that handler, and only once.
    */
   export function dock_content(): NativeElement;
-
-  /** Which edge or corner of a tile a resize handle pulls. */
-  export type TileResizeSide = "left" | "right" | "top" | "bottom" | "bottom_right";
 
   /** Semantic color roles, aligned with `gpui_base::ColorTokens`. */
   export type ColorTokens = { readonly [Role in ColorToken]: Color };
@@ -3899,6 +3891,8 @@ mod tests {
         "controls_right",
         "when",
         "on_click",
+        "token",
+        "on_token_click",
         "on_mouse_move",
         "on_hover",
         "on_key_down",
@@ -3968,11 +3962,6 @@ mod tests {
         "drop_tab",
         "toggle_dock",
         "resize_dock",
-        "move_tile",
-        "resize_tile",
-        "raise_tile",
-        "toggle_tile_zoom",
-        "close_tile",
         "value",
         "indeterminate",
         "axis",

@@ -1,13 +1,15 @@
 use gpui::{
-    App, InteractiveElement as _, IntoElement, ListState, ParentElement as _, SharedString,
-    Styled as _, Window, div,
+    App, IntoElement, ListState, ParentElement as _, SharedString, Styled as _, Window, div,
 };
 
-use std::{ops::RangeInclusive, sync::Arc};
+use std::{
+    ops::{Range, RangeInclusive},
+    sync::Arc,
+};
 
 use crate::text::{
     SelectionFormat,
-    node::{BlockNode, NodeContext},
+    node::{BlockNode, NodeContext, SourceRangeSelection},
 };
 
 /// The parsed document AST.
@@ -151,6 +153,14 @@ impl ParsedDocument {
         block.selected_text(SelectionFormat::Source)
     }
 
+    pub(super) fn selected_source_range(&self) -> Option<Range<usize>> {
+        let mut selected = SourceRangeSelection::Unselected;
+        for block in self.blocks.iter() {
+            selected.merge(block.selected_source_range());
+        }
+        selected.into_range()
+    }
+
     /// Synchronously clear the selection stored in every inline state.
     ///
     /// This mirrors the [`selected_text`](Self::selected_text) traversal so the
@@ -184,21 +194,19 @@ impl ParsedDocument {
     ) -> impl IntoElement {
         let Some(list_state) = list_state else {
             let blocks_len = self.blocks.len();
-            return div()
-                .id("document")
-                .children(self.blocks.iter().enumerate().map(move |(ix, node)| {
-                    let is_last = ix + 1 == blocks_len;
-                    node.render_block(
-                        NodeRenderOptions {
-                            ix,
-                            is_last,
-                            ..Default::default()
-                        },
-                        node_cx,
-                        window,
-                        cx,
-                    )
-                }));
+            return div().children(self.blocks.iter().enumerate().map(move |(ix, node)| {
+                let is_last = ix + 1 == blocks_len;
+                node.render_block(
+                    NodeRenderOptions {
+                        ix,
+                        is_last,
+                        ..Default::default()
+                    },
+                    node_cx,
+                    window,
+                    cx,
+                )
+            }));
         };
 
         let options = NodeRenderOptions {
@@ -211,7 +219,7 @@ impl ParsedDocument {
             list_state.reset(blocks.len());
         }
 
-        div().id("document").size_full().child(
+        div().size_full().child(
             gpui::list(list_state, {
                 let node_cx = node_cx.clone();
                 let blocks = blocks.clone();

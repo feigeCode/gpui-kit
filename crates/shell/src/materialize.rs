@@ -138,6 +138,7 @@ use gpui_base::{
 mod components;
 
 use crate::{
+    capability::is_openable_url,
     engine::ShellRuntime,
     scroll::Scrollable,
     snapshot::RenderSnapshot,
@@ -333,6 +334,8 @@ struct Behavior {
     href: Option<SharedString>,
     on_click: Option<CallbackId>,
     on_change: Option<CallbackId>,
+    token: Option<CallbackId>,
+    on_token_click: Option<CallbackId>,
     on_mouse_move: Option<CallbackId>,
     on_hover: Option<CallbackId>,
     /// Reports a key press that reached this element.
@@ -446,8 +449,7 @@ struct Behavior {
     /// The dock commands a chrome element carries — what base is asked to do
     /// when it is clicked or dragged.
     ///
-    /// A list, because one element often carries two: a tile's drag bar both
-    /// raises the tile and moves it, and a tab both selects and drags.
+    /// A list, because one element can carry two: a tab both selects and drags.
     dock_commands: SmallVec<[crate::dock::DockAction; 2]>,
     /// Which script handler draws each piece of a `dock_area`'s chrome.
     ///
@@ -825,6 +827,7 @@ fn materialize_node(
             snapshot,
             arena,
             node,
+            element_id(id, behavior.key.clone()),
             component,
             inherited,
             Box::new(RegisteredMaterializeParts {
@@ -866,6 +869,7 @@ fn materialize_registered_component(
     snapshot: Option<&RenderSnapshot>,
     arena: &SpecArena,
     node: &SpecNode,
+    identity: gpui::ElementId,
     component: crate::spec::RegisteredComponentSpec,
     inherited: gpui::Hsla,
     parts: Box<RegisteredMaterializeParts>,
@@ -939,6 +943,7 @@ fn materialize_registered_component(
     let mut request =
         crate::MaterializeRequest::new(crate::component_registry::MaterializeRequestInit {
             component_name: component.name(),
+            element_id: identity,
             payload: component.payload(),
             operations: node.ops(),
             runtime,
@@ -1073,6 +1078,20 @@ fn materialize_component(
                 );
                 view = view.on_link_click(move |url, _event, window, cx| {
                     route.emit(crate::HostValue::from(url.to_string()), window, cx);
+                });
+            } else {
+                view = view.on_link_click(|url, event, _, cx| {
+                    // Preserve Base's activation behavior, but apply Shell's URL rules.
+                    let activate = match event {
+                        gpui::ClickEvent::Mouse(click) => {
+                            matches!(click.up.button, MouseButton::Left | MouseButton::Middle)
+                        }
+                        gpui::ClickEvent::Keyboard(_) => true,
+                        gpui::ClickEvent::Touch(click) => !click.long_press,
+                    };
+                    if activate && is_openable_url(url) {
+                        cx.open_url(url);
+                    }
                 });
             }
             Styled::style(&mut view).refine(&refinement);
@@ -1485,7 +1504,23 @@ fn materialize_component(
             frame.extend(children);
             let frame = with_hover(frame, &states);
             let frame = with_active_and_focus(frame, &states);
-            frame.child(Input::new(&state)).into_any_element()
+            let callbacks = crate::InlineTokenCallbacks::new(
+                &state,
+                behavior
+                    .token
+                    .map(|id| crate::ComponentElementCallback::from_runtime(runtime, id)),
+                behavior
+                    .on_token_click
+                    .map(|id| crate::ComponentCallback::from_runtime(runtime, id)),
+            );
+            let input = callbacks.apply(
+                Input::new(&state),
+                |input, render| input.token(move |token, window, cx| render(token, window, cx)),
+                |input, listen| {
+                    input.on_token_click(move |event, window, cx| listen(event, window, cx))
+                },
+            );
+            frame.child(input).into_any_element()
         }
         Component::OtpInput(handle) => components::otp_input::otp_input(
             runtime, handle, refinement, behavior, states, children, window, cx,
@@ -2480,6 +2515,8 @@ pub(in crate::materialize) fn resolve_ops(
                 "on_scroll_wheel" => behavior.on_scroll_wheel = Some(*id),
                 "on_resize" => behavior.on_resize = Some(*id),
                 "on_change" => behavior.on_change = Some(*id),
+                "token" => behavior.token = Some(*id),
+                "on_token_click" => behavior.on_token_click = Some(*id),
                 "on_step" => behavior.on_step = Some(*id),
                 "on_open_change" => behavior.on_open_change = Some(*id),
                 "on_confirm" => behavior.on_confirm = Some(*id),
@@ -2490,8 +2527,6 @@ pub(in crate::materialize) fn resolve_ops(
                 "empty_group" => behavior.dock_chrome.empty_group = Some(*id),
                 "drop_indicator" => behavior.dock_chrome.drop_indicator = Some(*id),
                 "dock" => behavior.dock_chrome.dock = Some(*id),
-                "tile_drag_bar" => behavior.dock_chrome.tile_drag_bar = Some(*id),
-                "tile_resize_handles" => behavior.dock_chrome.tile_resize_handles = Some(*id),
                 other => tracing::error!("unhandled callback `{other}` reached materialize"),
             },
             SpecOp::ActionCallback(id, callback) => {
@@ -2818,8 +2853,7 @@ fn warn_unsupported(component: &str, methods: &[(&str, bool)]) {
 /// Every one of them takes the dock handle first, because a command is resolved
 /// against the contexts of *that* area — the script passes the container object
 /// it was handed, and the prelude unpacks the handle out of it. What follows
-/// names the container inside the area: a group's node, a dock's placement, or
-/// a tile's panel.
+/// names the container inside the area: a group's node or a dock's placement.
 fn is_dock_command(name: &str) -> bool {
     matches!(
         name,
@@ -2830,11 +2864,6 @@ fn is_dock_command(name: &str) -> bool {
             | "drop_tab"
             | "toggle_dock"
             | "resize_dock"
-            | "move_tile"
-            | "resize_tile"
-            | "raise_tile"
-            | "toggle_tile_zoom"
-            | "close_tile"
     )
 }
 
@@ -2857,7 +2886,6 @@ fn dock_action(name: &str, args: &[Bridged]) -> Option<crate::dock::DockAction> 
 
     let dock = handle(0)?;
     let node = || handle(1);
-    let panel = || handle(1);
 
     let command = match name {
         "select_tab" => DockCommand::SelectTab {
@@ -2885,14 +2913,6 @@ fn dock_action(name: &str, args: &[Bridged]) -> Option<crate::dock::DockAction> 
         "resize_dock" => DockCommand::ResizeDock {
             placement: dock_placement(text(1)?)?,
         },
-        "move_tile" => DockCommand::MoveTile { panel: panel()? },
-        "resize_tile" => DockCommand::ResizeTile {
-            panel: panel()?,
-            side: resize_side(text(2)?)?,
-        },
-        "raise_tile" => DockCommand::RaiseTile { panel: panel()? },
-        "toggle_tile_zoom" => DockCommand::ToggleTileZoom { panel: panel()? },
-        "close_tile" => DockCommand::CloseTile { panel: panel()? },
         _ => return None,
     };
 
@@ -2910,25 +2930,6 @@ pub(crate) fn dock_placement(name: &str) -> Option<gpui_base::dock::DockPlacemen
         _ => {
             tracing::error!(
                 "`{name}` is not a dock placement; expected \"center\", \"left\", \"right\" or \"bottom\""
-            );
-            None
-        }
-    }
-}
-
-/// Which edge or corner of a tile a resize handle pulls.
-fn resize_side(name: &str) -> Option<gpui_base::dock::ResizeSide> {
-    use gpui_base::dock::ResizeSide;
-    match name {
-        "left" => Some(ResizeSide::Left),
-        "right" => Some(ResizeSide::Right),
-        "top" => Some(ResizeSide::Top),
-        "bottom" => Some(ResizeSide::Bottom),
-        "bottom_right" => Some(ResizeSide::BottomRight),
-        _ => {
-            tracing::error!(
-                "`{name}` is not a tile resize side; expected \"left\", \"right\", \"top\", \
-                 \"bottom\" or \"bottom_right\""
             );
             None
         }

@@ -8,12 +8,13 @@
 //! | Path            | Crate             | Feature          |
 //! | --------------- | ----------------- | ---------------- |
 //! | `gpui_kit::*`   | `gpui`            | always           |
-//! | [`platform`]    | `gpui_platform`   | always           |
+//! | `platform`      | `gpui_platform`   | desktop / web    |
 //! | [`base`]        | `gpui-base`       | always           |
 //! | [`component`]   | `gpui-component`  | `component` (on) |
 //! | [`assets`]      | `gpui-kit-assets` | `assets` (on)    |
 //!
-//! [`application`] opens the platform and [`init`] initializes the enabled
+//! On desktop and web, `application` opens the platform. Mobile applications
+//! supply their backend to `Application::with_platform`. [`init`] initializes the enabled
 //! layers:
 //!
 //! ```no_run
@@ -32,11 +33,8 @@
 //! fn main() {
 //!     gpui_kit::application().run(|cx| {
 //!         gpui_kit::init(cx);
-//!         cx.spawn(async move |cx| {
-//!             cx.open_window(WindowOptions::default(), |_, cx| cx.new(|_| Hello))
-//!                 .expect("failed to open window");
-//!         })
-//!         .detach();
+//!         gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| cx.new(|_| Hello))
+//!             .expect("failed to open window");
 //!     });
 //! }
 //! ```
@@ -103,15 +101,16 @@ pub use ::gpui;
 pub mod test;
 
 pub use ::gpui_base as base;
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 pub use ::gpui_platform as platform;
 #[cfg(target_family = "wasm")]
 pub use ::gpui_web as web;
+pub use gpui_base::is_mobile;
 
 /// The styled component library.
 ///
 /// ```no_run
 /// use gpui_kit::component::button::*;
-/// use gpui_kit::component::Root;
 /// use gpui_kit::*;
 ///
 /// struct Hello;
@@ -125,22 +124,42 @@ pub use ::gpui_web as web;
 /// fn main() {
 ///     gpui_kit::application().run(|cx| {
 ///         gpui_kit::init(cx);
-///         cx.spawn(async move |cx| {
-///             cx.open_window(WindowOptions::default(), |window, cx| {
-///                 let view = cx.new(|_| Hello);
-///                 cx.new(|cx| Root::new(view, window, cx))
-///             })
+///         gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| cx.new(|_| Hello))
 ///             .expect("failed to open window");
-///         })
-///         .detach();
 ///     });
 /// }
 /// ```
 #[cfg(feature = "component")]
 pub use ::gpui_component as component;
+
 #[cfg(feature = "assets")]
 pub use ::gpui_kit_assets as assets;
 
+/// Open a window with a Base Root and return the window and application content.
+/// Applications own quit/close actions and confirmation flows.
+/// Call [`init`] before opening application windows.
+/// The builder returns application content, not another Root.
+///
+/// In an async context, call this inside `cx.update`.
+pub fn open_window<V: Render>(
+    options: WindowOptions,
+    cx: &mut App,
+    build: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
+) -> Result<(AnyWindowHandle, Entity<V>)> {
+    let mut built = None;
+    let window = cx.open_window(options, |window, cx| {
+        let view = build(window, cx);
+        built = Some(view.clone());
+        cx.new(|cx| base::Root::new(view, window, cx))
+    })?;
+    Ok((
+        window.into(),
+        built.expect("open_window ran its build closure"),
+    ))
+}
+
+// Mobile applications provide their platform with `Application::with_platform`.
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 pub use ::gpui_platform::application;
 
 /// Initializes every enabled layer. Call it once, before using anything else.

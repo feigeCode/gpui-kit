@@ -1,20 +1,21 @@
+use crate::root::WindowState;
 use gpui_base::TestSupportExt as _;
 use std::{rc::Rc, sync::LazyLock, time::Duration};
 
 use gpui::{
-    Animation, AnimationExt as _, AnyElement, App, BoxShadow, ClickEvent, Edges, FocusHandle, Hsla,
-    InteractiveElement, IntoElement, ParentElement, Pixels, RenderOnce, SharedString,
-    StyleRefinement, Styled, Window, WindowControlArea, anchored, div, hsla, point,
+    Action, Anchor, Animation, AnimationExt as _, AnyElement, App, BoxShadow, ClickEvent, Edges,
+    FocusHandle, Hsla, InteractiveElement, IntoElement, ParentElement, Pixels, RenderOnce,
+    SharedString, StyleRefinement, Styled, Window, WindowControlArea, anchored, div, hsla, point,
     prelude::FluentBuilder, px,
 };
 use gpui_base::{ElementExt as _, TextSelectionScopeId};
 use rust_i18n::t;
 
 use crate::{
-    ActiveTheme as _, IconName, Root, Sizable as _, StyledExt, TITLE_BAR_HEIGHT, WindowExt as _,
+    ActiveTheme as _, IconName, Sizable as _, StyledExt, TITLE_BAR_HEIGHT, WindowExt as _,
     animation::cubic_bezier,
     button::{Button, ButtonVariant, ButtonVariants as _},
-    dialog::{DialogContent, DialogTitle},
+    dialog::{DialogContent, DialogDispatchAnchor, DialogTitle},
     scroll::ScrollableElement as _,
     v_flex,
 };
@@ -22,32 +23,35 @@ use crate::{
 pub static ANIMATION_DURATION: LazyLock<Duration> = LazyLock::new(|| Duration::from_secs_f64(0.25));
 pub use gpui_base::actions::{Cancel, Confirm};
 
-/// Dialog button props.
-#[derive(Clone)]
-pub struct DialogButtonProps {
-    pub(crate) ok_text: Option<SharedString>,
-    pub(crate) ok_variant: ButtonVariant,
-    pub(crate) cancel_text: Option<SharedString>,
-    pub(crate) cancel_variant: ButtonVariant,
-    pub(crate) show_cancel: bool,
-    pub(crate) on_ok: Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) -> bool + 'static>,
-    pub(crate) on_cancel: Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) -> bool + 'static>,
-    pub(crate) on_close: Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
+type OkHandler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) -> bool + 'static>;
+type CancelHandler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) -> bool + 'static>;
+type CloseHandler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
+
+/// Overwrite `slot` only when `value` was explicitly set.
+fn merge_field<T>(slot: &mut Option<T>, value: Option<T>) {
+    if value.is_some() {
+        *slot = value;
+    }
 }
 
-impl Default for DialogButtonProps {
-    fn default() -> Self {
-        Self {
-            ok_text: None,
-            ok_variant: ButtonVariant::Primary,
-            cancel_text: None,
-            cancel_variant: ButtonVariant::default(),
-            show_cancel: false,
-            on_ok: Rc::new(|_, _, _| true),
-            on_cancel: Rc::new(|_, _, _| true),
-            on_close: Rc::new(|_, _, _| {}),
-        }
-    }
+/// Dialog button props.
+///
+/// Every field is unset until a builder sets it, and an unset field falls back
+/// to its documented default when the dialog renders. Handing a value to
+/// [`Dialog::button_props`] or [`crate::dialog::AlertDialog::button_props`]
+/// therefore overrides only the fields that value sets: whatever the dialog
+/// already carries — the Cancel button `AlertDialog::confirm` asked for, a
+/// callback an earlier `on_ok` installed — survives.
+#[derive(Clone, Default)]
+pub struct DialogButtonProps {
+    pub(crate) ok_text: Option<SharedString>,
+    pub(crate) ok_variant: Option<ButtonVariant>,
+    pub(crate) cancel_text: Option<SharedString>,
+    pub(crate) cancel_variant: Option<ButtonVariant>,
+    pub(crate) show_cancel: Option<bool>,
+    pub(crate) on_ok: Option<OkHandler>,
+    pub(crate) on_cancel: Option<CancelHandler>,
+    pub(crate) on_close: Option<CloseHandler>,
 }
 
 impl DialogButtonProps {
@@ -59,7 +63,7 @@ impl DialogButtonProps {
 
     /// Sets the variant of the OK button. Default is `ButtonVariant::Primary`.
     pub fn ok_variant(mut self, ok_variant: ButtonVariant) -> Self {
-        self.ok_variant = ok_variant;
+        self.ok_variant = Some(ok_variant);
         self
     }
 
@@ -71,13 +75,13 @@ impl DialogButtonProps {
 
     /// Sets the variant of the Cancel button. Default is `ButtonVariant::default()`.
     pub fn cancel_variant(mut self, cancel_variant: ButtonVariant) -> Self {
-        self.cancel_variant = cancel_variant;
+        self.cancel_variant = Some(cancel_variant);
         self
     }
 
     /// Sets whether to show the Cancel button. Default is `false`.
     pub fn show_cancel(mut self, show_cancel: bool) -> Self {
-        self.show_cancel = show_cancel;
+        self.show_cancel = Some(show_cancel);
         self
     }
 
@@ -88,7 +92,7 @@ impl DialogButtonProps {
         mut self,
         on_ok: impl Fn(&ClickEvent, &mut Window, &mut App) -> bool + 'static,
     ) -> Self {
-        self.on_ok = Rc::new(on_ok);
+        self.on_ok = Some(Rc::new(on_ok));
         self
     }
 
@@ -99,8 +103,46 @@ impl DialogButtonProps {
         mut self,
         on_cancel: impl Fn(&ClickEvent, &mut Window, &mut App) -> bool + 'static,
     ) -> Self {
-        self.on_cancel = Rc::new(on_cancel);
+        self.on_cancel = Some(Rc::new(on_cancel));
         self
+    }
+
+    /// Takes over every field `other` sets and keeps the rest.
+    pub(crate) fn merge(&mut self, other: Self) {
+        merge_field(&mut self.ok_text, other.ok_text);
+        merge_field(&mut self.ok_variant, other.ok_variant);
+        merge_field(&mut self.cancel_text, other.cancel_text);
+        merge_field(&mut self.cancel_variant, other.cancel_variant);
+        merge_field(&mut self.show_cancel, other.show_cancel);
+        merge_field(&mut self.on_ok, other.on_ok);
+        merge_field(&mut self.on_cancel, other.on_cancel);
+        merge_field(&mut self.on_close, other.on_close);
+    }
+
+    /// Whether the default footer renders a Cancel button. Default is `false`.
+    pub(crate) fn is_cancel_shown(&self) -> bool {
+        self.show_cancel.unwrap_or(false)
+    }
+
+    /// The confirm callback, defaulting to one that closes the dialog.
+    pub(crate) fn ok_handler(&self) -> OkHandler {
+        self.on_ok
+            .clone()
+            .unwrap_or_else(|| Rc::new(|_, _, _| true))
+    }
+
+    /// The cancel callback, defaulting to one that closes the dialog.
+    pub(crate) fn cancel_handler(&self) -> CancelHandler {
+        self.on_cancel
+            .clone()
+            .unwrap_or_else(|| Rc::new(|_, _, _| true))
+    }
+
+    /// The close callback, defaulting to one that does nothing.
+    pub(crate) fn close_handler(&self) -> CloseHandler {
+        self.on_close
+            .clone()
+            .unwrap_or_else(|| Rc::new(|_, _, _| {}))
     }
 
     pub(crate) fn render_ok(&self, _: &mut Window, _: &mut App) -> AnyElement {
@@ -108,15 +150,15 @@ impl DialogButtonProps {
             .ok_text
             .clone()
             .unwrap_or_else(|| t!("Dialog.ok").into());
-        let ok_variant = self.ok_variant;
 
-        Button::new("ok")
-            .label(ok_text)
-            .with_variant(ok_variant)
-            .on_click(|_, window, cx| {
-                window.dispatch_action(Box::new(Confirm { secondary: false }), cx)
-            })
-            .into_any_element()
+        DialogButton {
+            anchor_key: "dialog-ok-anchor",
+            button: Button::new("ok")
+                .label(ok_text)
+                .with_variant(self.ok_variant.unwrap_or(ButtonVariant::Primary)),
+            action: Rc::new(Confirm { secondary: false }),
+        }
+        .into_any_element()
     }
 
     pub(crate) fn render_cancel(&self, _: &mut Window, _: &mut App) -> AnyElement {
@@ -124,13 +166,34 @@ impl DialogButtonProps {
             .cancel_text
             .clone()
             .unwrap_or_else(|| t!("Dialog.cancel").into());
-        let cancel_variant = self.cancel_variant;
 
-        Button::new("cancel")
-            .label(cancel_text)
-            .with_variant(cancel_variant)
-            .on_click(|_, window, cx| window.dispatch_action(Box::new(Cancel), cx))
-            .into_any_element()
+        DialogButton {
+            anchor_key: "dialog-cancel-anchor",
+            button: Button::new("cancel")
+                .label(cancel_text)
+                .with_variant(self.cancel_variant.unwrap_or_default()),
+            action: Rc::new(Cancel),
+        }
+        .into_any_element()
+    }
+}
+
+/// A default dialog button: activating it dispatches `action` on the dialog
+/// it sits in, whatever holds focus at that moment.
+#[derive(IntoElement)]
+struct DialogButton {
+    /// Distinct per button: OK and Cancel render as siblings in one scope.
+    anchor_key: &'static str,
+    button: Button,
+    action: Rc<dyn Action>,
+}
+
+impl RenderOnce for DialogButton {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let anchor = DialogDispatchAnchor::new(self.anchor_key, window, cx);
+        self.button
+            .child(anchor.element())
+            .on_click(move |_, window, cx| anchor.dispatch(&*self.action, window, cx))
     }
 }
 
@@ -321,10 +384,15 @@ impl Dialog {
     }
 
     /// Set the button props of the dialog.
+    ///
+    /// This overrides only the fields `button_props` sets; the rest of the
+    /// dialog's button configuration is kept, so the call order does not
+    /// matter.
     pub fn button_props(mut self, button_props: DialogButtonProps) -> Self {
-        self.button_props = button_props;
+        self.button_props.merge(button_props);
         self
     }
+
     pub(crate) fn with_base_alert_dialog(mut self, base: gpui_base::AlertDialog) -> Self {
         self.base = Some(BaseDialogRoot::AlertDialog(base));
         self.props.overlay_closable = false;
@@ -338,7 +406,7 @@ impl Dialog {
         mut self,
         on_close: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
-        self.button_props.on_close = Rc::new(on_close);
+        self.button_props.on_close = Some(Rc::new(on_close));
         self
     }
 
@@ -378,6 +446,8 @@ impl Dialog {
 
     /// Sets the width of the dialog, defaults to 448px.
     ///
+    /// The dialog is never wider than the viewport minus a margin on each side.
+    ///
     /// See also [`Self::width`]
     pub fn w(mut self, width: impl Into<Pixels>) -> Self {
         self.props.width = width.into();
@@ -385,6 +455,8 @@ impl Dialog {
     }
 
     /// Sets the width of the dialog, defaults to 448px.
+    ///
+    /// The dialog is never wider than the viewport minus a margin on each side.
     pub fn width(mut self, width: impl Into<Pixels>) -> Self {
         self.props.width = width.into();
         self
@@ -426,7 +498,7 @@ impl Dialog {
     }
 
     fn defer_close_dialog(window: &mut Window, cx: &mut App) {
-        Root::update(window, cx, |root, window, cx| {
+        WindowState::update(window, cx, |root, window, cx| {
             root.defer_close_dialog(window, cx);
         });
     }
@@ -486,9 +558,9 @@ impl RenderOnce for Dialog {
 
         let layer_ix = self.layer_ix;
         let selection_scope = self.selection_scope;
-        let on_close = self.button_props.on_close.clone();
-        let on_ok = self.button_props.on_ok.clone();
-        let on_cancel = self.button_props.on_cancel.clone();
+        let on_close = self.button_props.close_handler();
+        let on_ok = self.button_props.ok_handler();
+        let on_cancel = self.button_props.cancel_handler();
 
         let window_paddings = crate::window_border::window_paddings(window);
         let view_size = window.viewport_size()
@@ -496,8 +568,20 @@ impl RenderOnce for Dialog {
                 window_paddings.left + window_paddings.right,
                 window_paddings.top + window_paddings.bottom,
             );
-        let y = self.props.margin_top.unwrap_or(view_size.height / 10.) + px(layer_ix as f32 * 16.);
-        let x = view_size.width / 2. - self.props.width / 2.;
+        // The dialog keeps this much of the viewport clear around its edges,
+        // so a small window shrinks the surface instead of letting it run off
+        // the window. A dialog that fits keeps `margin_top` (a tenth of the
+        // viewport by default); an overflowing one is snapped up to this edge
+        // margin so that the preferred offset does not waste usable height.
+        let margin = cx.theme().spacing_tokens().lg;
+        let layer_offset = px(layer_ix as f32 * 16.);
+        let y = self.props.margin_top.unwrap_or(view_size.height / 10.) + layer_offset;
+        let width = self
+            .props
+            .width
+            .min((view_size.width - margin * 2.).max(px(0.)));
+        let x = (view_size.width - width) / 2.;
+        let max_height = (view_size.height - margin * 2. - layer_offset).max(px(0.));
 
         let base_size = window.text_style().font_size;
         let rem_size = window.rem_size();
@@ -543,7 +627,8 @@ impl RenderOnce for Dialog {
                             .expect("Dialog base host is always present")
                             .layer(
                                 layer_ix,
-                                (self.layer_ix + 1) == Root::read(window, cx).active_dialogs.len(),
+                                (self.layer_ix + 1)
+                                    == WindowState::read(window, cx).active_dialogs.len(),
                             )
                             .focus_handle(self.focus_handle.clone())
                             .close_on_escape(self.props.keyboard)
@@ -571,125 +656,273 @@ impl RenderOnce for Dialog {
                                 }
                             })
                             .popup(
-                                v_flex()
-                                    .id(layer_ix)
-                                    .test_support()
-                                    .bg(cx.theme().tokens.background)
-                                    .border_1()
-                                    .border_color(cx.theme().border)
-                                    .rounded(cx.theme().radius_lg)
-                                    .min_h_24()
-                                    .pt(paddings.top)
-                                    .pb(paddings.bottom)
-                                    .gap(paddings.top.max(px(8.)))
-                                    .refine_style(&self.style)
-                                    .px_0()
-                                    // There style is high priority, can't be overridden.
-                                    .absolute()
-                                    .occlude()
-                                    .relative()
-                                    .left(x)
-                                    .top(y)
-                                    .w(self.props.width)
-                                    .when_some(self.props.max_width, |this, w| this.max_w(w))
-                                    .child(
-                                        v_flex()
-                                            .flex_1()
-                                            .overflow_hidden()
-                                            .gap_y_2()
-                                            .when_some(self.header, |this, header| {
-                                                this.child(
-                                                    div()
-                                                        .pl(paddings.left)
-                                                        .pr(paddings.right)
-                                                        .child(header),
-                                                )
-                                            })
-                                            .when_some(self.title, |this, title| {
-                                                this.child(
-                                                    DialogTitle::new()
-                                                        .pl(paddings.left)
-                                                        .pr(paddings.right)
-                                                        .child(title),
-                                                )
-                                            })
-                                            .when_some(self.content_builder, |this, builder| {
-                                                this.child(builder(
-                                                    DialogContent::new()
-                                                        .gap(paddings.bottom)
-                                                        .pl(paddings.left)
-                                                        .pr(paddings.right),
-                                                    window,
-                                                    cx,
-                                                ))
-                                            })
-                                            .when(!self.children.is_empty(), |this| {
-                                                this.child(
-                                                    div().flex_1().overflow_hidden().child(
-                                                        // Body
-                                                        v_flex()
-                                                            .size_full()
-                                                            .overflow_y_scrollbar()
+                                gpui_base::Positioner::corner(
+                                    Anchor::TopLeft,
+                                    point(window_paddings.left + x, window_paddings.top + y),
+                                )
+                                .margin(margin)
+                                .child(
+                                    v_flex()
+                                        .id(layer_ix)
+                                        .test_support()
+                                        .debug_selector(move || format!("dialog-{layer_ix}"))
+                                        .bg(cx.theme().tokens.background)
+                                        .border_1()
+                                        .border_color(cx.theme().border)
+                                        .rounded(cx.theme().radius_lg)
+                                        .min_h_24()
+                                        .pt(paddings.top)
+                                        .pb(paddings.bottom)
+                                        .gap(paddings.top.max(px(8.)))
+                                        .refine_style(&self.style)
+                                        .px_0()
+                                        .occlude()
+                                        .w(width)
+                                        .when_some(self.props.max_width, |this, w| this.max_w(w))
+                                        .max_h(max_height)
+                                        .child(
+                                            v_flex()
+                                                .flex_1()
+                                                .overflow_hidden()
+                                                .gap_y_2()
+                                                .when_some(self.header, |this, header| {
+                                                    this.child(
+                                                        div()
                                                             .pl(paddings.left)
                                                             .pr(paddings.right)
-                                                            .children(self.children),
-                                                    ),
-                                                )
-                                            }),
-                                    )
-                                    .when_some(self.footer, |this, footer| {
-                                        this.child(
-                                            div()
-                                                .pl(paddings.left)
-                                                .pr(paddings.right)
-                                                .child(footer),
+                                                            .child(header),
+                                                    )
+                                                })
+                                                .when_some(self.title, |this, title| {
+                                                    this.child(
+                                                        DialogTitle::new()
+                                                            .pl(paddings.left)
+                                                            .pr(paddings.right)
+                                                            .child(title),
+                                                    )
+                                                })
+                                                .when_some(self.content_builder, |this, builder| {
+                                                    this.child(builder(
+                                                        DialogContent::new()
+                                                            .gap(paddings.bottom)
+                                                            .pl(paddings.left)
+                                                            .pr(paddings.right),
+                                                        window,
+                                                        cx,
+                                                    ))
+                                                })
+                                                .when(!self.children.is_empty(), |this| {
+                                                    this.child(
+                                                        div().flex_1().overflow_hidden().child(
+                                                            // Body
+                                                            v_flex()
+                                                                .size_full()
+                                                                .overflow_y_scrollbar()
+                                                                .pl(paddings.left)
+                                                                .pr(paddings.right)
+                                                                .children(self.children),
+                                                        ),
+                                                    )
+                                                }),
                                         )
-                                    })
-                                    .children(self.props.close_button.then(|| {
-                                        let top = (paddings.top - px(10.)).max(px(8.));
-                                        let right = (paddings.right - px(10.)).max(px(8.));
+                                        .when_some(self.footer, |this, footer| {
+                                            this.child(
+                                                div()
+                                                    .pl(paddings.left)
+                                                    .pr(paddings.right)
+                                                    .child(footer),
+                                            )
+                                        })
+                                        .children(self.props.close_button.then(|| {
+                                            let top = (paddings.top - px(10.)).max(px(8.));
+                                            let right = (paddings.right - px(10.)).max(px(8.));
 
-                                        gpui_base::DialogClose::new()
-                                            .absolute()
-                                            .top(top)
-                                            .right(right)
-                                            .trigger(|button| {
-                                                Button::new("close")
-                                                    .with_base(button)
-                                                    .small()
-                                                    .ghost()
-                                                    .icon(IconName::Close)
-                                            })
-                                    }))
-                                    .with_animation(
-                                        "slide-down",
-                                        animation.clone(),
-                                        move |this, delta| {
-                                            // This is equivalent to `shadow_xl` with an extra opacity.
-                                            let shadow = vec![
-                                                BoxShadow {
-                                                    color: hsla(0., 0., 0., 0.1 * delta),
-                                                    offset: point(px(0.), px(20.)),
-                                                    blur_radius: px(25.),
-                                                    spread_radius: px(-5.),
-                                                    inset: false,
-                                                },
-                                                BoxShadow {
-                                                    color: hsla(0., 0., 0., 0.1 * delta),
-                                                    offset: point(px(0.), px(8.)),
-                                                    blur_radius: px(10.),
-                                                    spread_radius: px(-6.),
-                                                    inset: false,
-                                                },
-                                            ];
-                                            this.top(y * delta).shadow(shadow)
-                                        },
-                                    )
-                                    .text_selection_scope(selection_scope),
+                                            gpui_base::DialogClose::new()
+                                                .absolute()
+                                                .top(top)
+                                                .right(right)
+                                                .trigger(|button| {
+                                                    Button::new("close")
+                                                        .with_base(button)
+                                                        .small()
+                                                        .ghost()
+                                                        .icon(IconName::Close)
+                                                })
+                                        }))
+                                        .with_animation(
+                                            "slide-down-shadow",
+                                            animation.clone(),
+                                            move |this, delta| {
+                                                // This is equivalent to `shadow_xl` with an extra opacity.
+                                                let shadow = vec![
+                                                    BoxShadow {
+                                                        color: hsla(0., 0., 0., 0.1 * delta),
+                                                        offset: point(px(0.), px(20.)),
+                                                        blur_radius: px(25.),
+                                                        spread_radius: px(-5.),
+                                                        inset: false,
+                                                    },
+                                                    BoxShadow {
+                                                        color: hsla(0., 0., 0., 0.1 * delta),
+                                                        offset: point(px(0.), px(8.)),
+                                                        blur_radius: px(10.),
+                                                        spread_radius: px(-6.),
+                                                        inset: false,
+                                                    },
+                                                ];
+                                                this.shadow(shadow)
+                                            },
+                                        )
+                                        .text_selection_scope(selection_scope),
+                                )
+                                .with_animation(
+                                    "slide-down",
+                                    animation.clone(),
+                                    move |this, delta| {
+                                        this.position(point(
+                                            window_paddings.left + x,
+                                            window_paddings.top + y * delta,
+                                        ))
+                                    },
+                                ),
                             ),
                     )
                     .with_animation("fade-in", animation, move |this, delta| this.opacity(delta)),
             )
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+    use gpui::{AppContext as _, Bounds, Context, Render, TestAppContext, VisualTestContext, size};
+
+    struct DialogHost;
+
+    impl Render for DialogHost {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full()
+        }
+    }
+
+    /// A window of `window_size` whose root renders the dialog layer, with
+    /// motion reduced so the entrance animation settles on its first frame.
+    pub(crate) fn window(
+        cx: &mut TestAppContext,
+        window_size: gpui::Size<Pixels>,
+    ) -> &mut VisualTestContext {
+        cx.update(|cx| {
+            crate::init(cx);
+            cx.set_reduce_motion(true);
+        });
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let view = cx.new(|_| DialogHost);
+            crate::Root::new(view, window, cx)
+        });
+        cx.simulate_resize(window_size);
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx
+    }
+
+    fn open(
+        cx: &mut VisualTestContext,
+        build: impl Fn(Dialog, &mut Window, &mut App) -> Dialog + 'static,
+    ) {
+        cx.update(|window, cx| window.open_dialog(cx, build));
+        cx.run_until_parked();
+        // One frame mounts the layer, the next paints it at rest.
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+    }
+
+    fn surface(cx: &mut VisualTestContext, layer_ix: usize) -> Bounds<Pixels> {
+        let selector = ["dialog-0", "dialog-1"][layer_ix];
+        cx.debug_bounds(selector)
+            .unwrap_or_else(|| panic!("dialog layer {layer_ix} was not painted"))
+    }
+
+    /// The clamp must not touch a dialog that already fits: the default width
+    /// and the tenth-of-the-viewport top offset are the documented contract.
+    #[gpui::test]
+    fn a_dialog_that_fits_keeps_its_default_width_and_top_offset(cx: &mut TestAppContext) {
+        let cx = window(cx, size(px(1000.), px(800.)));
+        open(cx, |dialog, _, _| dialog.title("Fits").child("body"));
+
+        let bounds = surface(cx, 0);
+        assert_eq!(bounds.size.width, px(448.));
+        assert_eq!(bounds.origin.x, px(276.));
+        assert_eq!(bounds.origin.y, px(80.));
+    }
+
+    /// A dialog wider and taller than the window must shrink to the viewport
+    /// instead of running off both edges. It also gives up the usual top
+    /// offset so that space is available to its content, while its footer
+    /// remains inside the surface rather than clipped below it.
+    #[gpui::test]
+    fn a_dialog_larger_than_the_window_stays_inside_it(cx: &mut TestAppContext) {
+        let viewport = size(px(400.), px(300.));
+        let cx = window(cx, viewport);
+        open(cx, |dialog, _, _| {
+            dialog
+                .w(px(800.))
+                .title("Too big")
+                .child(div().h(px(1000.)).child("tall body"))
+                .footer(div().h(px(32.)).debug_selector(|| "footer-probe".into()))
+        });
+
+        let bounds = surface(cx, 0);
+        let footer = cx.debug_bounds("footer-probe").unwrap();
+        let margin = px(16.);
+        assert!(
+            bounds.origin.x >= margin && bounds.right() <= viewport.width - margin,
+            "the dialog ran off the sides: {bounds:?}"
+        );
+        assert!(
+            bounds.bottom() <= viewport.height - margin,
+            "the dialog ran off the bottom: {bounds:?}"
+        );
+        assert_eq!(bounds.origin.y, margin);
+        assert!(
+            footer.bottom() <= bounds.bottom(),
+            "the footer was clipped below the dialog: footer {footer:?}, dialog {bounds:?}"
+        );
+    }
+
+    /// `Dialog::button_props` overrides only the fields it sets.
+    #[gpui::test]
+    fn dialog_button_props_merge_with_what_the_dialog_already_carries(cx: &mut TestAppContext) {
+        let cx = window(cx, size(px(400.), px(300.)));
+        cx.update(|_, cx| {
+            let dialog = Dialog::new(cx)
+                .button_props(DialogButtonProps::default().cancel_text("Keep"))
+                .button_props(DialogButtonProps::default().ok_text("Delete"))
+                .button_props(DialogButtonProps::default().ok_variant(ButtonVariant::Danger));
+
+            assert_eq!(dialog.button_props.ok_text.as_deref(), Some("Delete"));
+            assert_eq!(dialog.button_props.cancel_text.as_deref(), Some("Keep"));
+            assert_eq!(dialog.button_props.ok_variant, Some(ButtonVariant::Danger));
+        });
+    }
+
+    /// Each stacked dialog steps down 16px; the deepest one must still end
+    /// above the bottom margin.
+    #[gpui::test]
+    fn stacked_dialogs_each_fit_the_window(cx: &mut TestAppContext) {
+        let viewport = size(px(400.), px(300.));
+        let cx = window(cx, viewport);
+        open(cx, |dialog, _, _| {
+            dialog.title("First").child(div().h(px(1000.)))
+        });
+        open(cx, |dialog, _, _| {
+            dialog.title("Second").child(div().h(px(1000.)))
+        });
+
+        let first = surface(cx, 0);
+        let second = surface(cx, 1);
+        assert_eq!(second.origin.y, first.origin.y + px(16.));
+        assert!(first.bottom() <= viewport.height - px(16.), "{first:?}");
+        assert!(second.bottom() <= viewport.height - px(16.), "{second:?}");
+        assert!(second.size.height < first.size.height);
     }
 }

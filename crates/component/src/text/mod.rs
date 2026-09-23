@@ -11,7 +11,7 @@ pub use frontmatter::FrontmatterPlugin;
 pub use gpui_base::text::{
     InlineElement, InlineRenderContext, MarkdownBlockParserFn, MarkdownBlockRenderFn,
     MarkdownExtensions, MarkdownNode, MarkdownParseContext, MarkdownPlugin, SelectionFormat,
-    TableData, TextViewState, markdown_ast,
+    TableData, TextViewMotion, TextViewState, markdown_ast,
 };
 pub use style::TextViewStyle;
 
@@ -119,6 +119,10 @@ pub(crate) fn component_code_block_highlighter(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use gpui::{StyleRefinement, Styled as _, px};
+
     use crate::Theme;
 
     /// The component highlighter is the only place that still knows about
@@ -336,6 +340,21 @@ mod tests {
         assert_eq!(
             style.inline_code().font_style,
             Some(gpui::FontStyle::Italic)
+        );
+    }
+
+    #[test]
+    fn legacy_heading_configuration_maps_to_base_heading_refinements() {
+        let theme = Theme::default();
+        let mut legacy = super::TextViewStyle::default();
+        legacy.heading_base_font_size = px(10.);
+        legacy.heading_font_size = Some(Arc::new(|level, base| base * level as f32));
+
+        let style = super::compat::resolve_component_style(&theme, legacy);
+
+        assert_eq!(
+            style.heading(2),
+            StyleRefinement::default().text_size(px(20.))
         );
     }
 }

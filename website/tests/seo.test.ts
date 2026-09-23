@@ -3,7 +3,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 
-const dist = new URL('../dist/', import.meta.url);
+const dist = new URL(process.env.SITE_TEST_DIST || '../dist/', import.meta.url);
 const read = (path) => readFileSync(new URL(path, dist), 'utf8');
 
 function htmlFiles(directory) {
@@ -99,6 +99,21 @@ test('component pages have independent routes, translated alternates and readabl
   }
 });
 
+test('versioned documentation examples load the shared root WASM builds', () => {
+  for (const path of [
+    'component/button/index.html',
+    'base/primitives/button/index.html',
+    'zh-CN/component/button/index.html',
+    'zh-CN/base/primitives/button/index.html',
+  ]) {
+    const html = read(path);
+    assert.ok(
+      html.includes('baseUrl&quot;:[0,&quot;/&quot;]'),
+      `${path} must load examples from the site-root WASM deployment`,
+    );
+  }
+});
+
 test('shared guides remain under docs and sidebars keep the sections separate', () => {
   for (const locale of ['', 'zh-CN/']) {
     for (const guide of ['coding-guides', 'design-guides']) {
@@ -134,6 +149,14 @@ test('component links and discovery use canonical routes', () => {
   assert.ok(!sitemap.includes('/docs/components'));
   assert.ok(!index.includes('/docs/components'));
   assert.ok(!full.includes('/docs/components'));
+});
+
+test('LLM discovery identifies tested consumer recipes', () => {
+  const index = read('llms.txt');
+  const full = read('llms-full.txt');
+  assert.match(index, /Tested consumer recipe: command-control/);
+  assert.match(full, /Tested consumer recipe: command-control/);
+  assert.match(full, /Source: \/component\/button/);
 });
 
 test('primary navigation follows the Kit section order', () => {

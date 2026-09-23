@@ -1,5 +1,6 @@
 ---
 title: Fonts
+order: -8
 description: System fonts, theme fonts, per-element overrides, and bundling custom fonts.
 ---
 
@@ -16,6 +17,13 @@ Every app starts with a UI font and a monospace font from the theme:
 
 The editor paints its code in `mono_font_family` at `mono_font_size`. See
 [Editor](../component/editor.md) for details.
+
+Both defaults are checked against the installed fonts when the theme is
+applied. A missing monospace default is swapped for an installed alternative,
+and when `.SystemUIFont` resolves to one of GPUI's fallback families rather
+than the system font itself (Linux desktops without the family GPUI maps it
+to), the theme names that family directly so text lookups stay cached. A
+family you set yourself is used as-is.
 
 ## System fonts
 
@@ -40,14 +48,14 @@ verify the exact family name on each target platform.
 
 ## Changing fonts via Theme
 
-Set the app-wide fonts on the `Theme` global, then sync to the base layer:
+Set the app-wide fonts through `Theme::update`, which syncs the base layer and refreshes every window:
 
 ```rust
-Theme::global_mut(cx).font_family = "Inter".into();
-Theme::global_mut(cx).mono_font_family = "JetBrains Mono".into();
-Theme::global_mut(cx).font_size = px(18.);
-Theme::sync_base(cx);
-window.refresh();
+Theme::update(cx, |theme| {
+    theme.font_family = "Inter".into();
+    theme.mono_font_family = "JetBrains Mono".into();
+    theme.font_size = px(18.);
+});
 ```
 
 `font_size` doubles as the application zoom control — `Root` calls
@@ -84,12 +92,11 @@ cx.text_system()
 Then reference them by family name as usual:
 
 ```rust
-Theme::global_mut(cx).font_family = "MyFont".into();
-Theme::sync_base(cx);
+Theme::update(cx, |theme| theme.font_family = "MyFont".into());
 ```
 
-The gallery's web build bundles `Inter`, `JetBrains Mono`, `NotoSansSC` and
-`NotoEmoji` this way — see `crates/story-web/src/lib.rs`.
+The gallery's web build bundles `Inter`, `JetBrains Mono`, `Noto Sans SC` and
+`IBM Plex Sans` this way — see `crates/story-web/src/lib.rs`.
 
 ## Theme JSON config
 
@@ -109,7 +116,7 @@ Load it with `ThemeRegistry`:
 ```rust
 ThemeRegistry::watch_dir(PathBuf::from("./themes"), cx, move |cx| {
     if let Some(theme) = ThemeRegistry::global(cx).themes().get(&theme_name).cloned() {
-        Theme::global_mut(cx).apply_config(&theme);
+        Theme::update(cx, |current| current.apply_config(&theme));
     }
 });
 ```
@@ -122,3 +129,36 @@ Browsers expose **no system fonts** to WASM apps. The `story-web` gallery
 (which runs at `gpui-kit.com/gallery/`) must bundle every family it uses and
 re-assert them after `Theme::change`, or the text system panics. Desktop apps
 skip this entirely.
+
+Text the bundled fonts cannot draw can still come from the browser. The web
+platform renders emoji through Canvas 2D with the visitor's local fonts, so
+an application does not have to bundle an emoji font. The policy is chosen
+when the platform is constructed and cannot change afterwards:
+
+| `CanvasFontFallback` | Browser draws |
+| --- | --- |
+| `Emoji` (default) | Emoji, including skin tones, flags, keycaps and ZWJ sequences |
+| `EmojiAndCjk` | Emoji plus horizontal Han, kana and modern Hangul text |
+| `Disabled` | Nothing; only bundled fonts are used |
+
+`gpui_kit::application()` and `gpui_kit::platform::single_threaded_web()` keep
+the default. To widen it, build the platform yourself:
+
+```rust
+use gpui_kit::web::{CanvasFontFallback, WebBackendPreference, WebPlatform};
+
+let platform = Rc::new(WebPlatform::new_with_backend_and_font_fallback(
+    false,
+    WebBackendPreference::Auto,
+    CanvasFontFallback::EmojiAndCjk,
+));
+let http_client = Arc::new(platform.fetch_http_client());
+let app = Application::with_platform(platform).with_http_client(http_client);
+```
+
+Bundled fonts stay preferred wherever they have the glyph. The fallback draws
+each grapheme on its own, so CJK text rendered this way favors readability
+over exact spacing and font features, and its appearance depends on the
+fonts installed on the visitor's machine. The gallery opts into
+`EmojiAndCjk`: its bundled fonts hold only the glyphs its own stories use, and
+anything a visitor types into an input would otherwise render as tofu.

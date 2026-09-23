@@ -8,6 +8,7 @@ pub(super) fn register(registry: &mut ComponentRegistry) -> Result<(), RegistryE
     skeleton::register(registry)?;
     chat::register(registry)?;
     empty::register(registry)?;
+    input_group::register(registry)?;
     controls::register(registry)?;
     delegate_collections::register(registry)?;
     delegate_combobox::register(registry)?;
@@ -31,9 +32,11 @@ pub(super) fn register(registry: &mut ComponentRegistry) -> Result<(), RegistryE
     basic::register(registry)?;
     chart::register(registry)?;
     carousel::register(registry)?;
+    questionnaire::register(registry)?;
     Ok(())
 }
 
+mod input_tokens;
 mod support;
 mod typed_child;
 
@@ -51,11 +54,13 @@ mod delegate_combobox;
 mod delegate_select;
 mod display;
 mod empty;
+mod input_group;
 mod layout;
 mod lifecycle;
 mod media;
 mod navigation;
 mod overlays;
+mod questionnaire;
 mod retained_forms;
 mod scroll;
 mod separator;

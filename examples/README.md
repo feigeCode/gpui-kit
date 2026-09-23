@@ -15,9 +15,18 @@ not enable the gallery's test-support development dependency.
 | Large text | `cargo run -p example-large-text` |
 | Markdown | `cargo run -p example-markdown` |
 | Streaming Markdown | `cargo run -p example-stream-markdown` |
-| Tiles | `cargo run -p example-tiles` |
+| Text selection | `cargo run -p text_selection` |
+| Touch selection | `cargo run -p touch_selection` |
 
 Shared sample documents live in `fixtures/`.
+
+## Opening windows
+
+Examples use `gpui_kit::open_window(options, cx, build)` after
+`gpui_kit::init(cx)`. The helper mounts the Base Root and returns the window
+handle and content entity. The native and web story galleries share this path.
+
+Headless test fixtures may construct Root directly through GPUI's test harness.
 
 ## Contributing
 

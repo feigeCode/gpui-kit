@@ -3,10 +3,7 @@ use std::cell::RefCell;
 
 use gpui_component_story::{Gallery, StoryRoot};
 use gpui_kit::assets::Assets;
-use gpui_kit::component::{
-    Root,
-    theme::{Theme, ThemeMode},
-};
+use gpui_kit::component::theme::{Theme, ThemeMode};
 use gpui_kit::{prelude::*, *};
 use wasm_bindgen::prelude::*;
 
@@ -21,9 +18,10 @@ thread_local! {
 /// are put back afterwards.
 fn apply_theme(mode: ThemeMode, cx: &mut App) {
     Theme::change(mode, None, cx);
-    let theme = cx.global_mut::<Theme>();
-    theme.font_family = "Inter Variable".into();
-    theme.mono_font_family = "JetBrains Mono".into();
+    Theme::update(cx, |theme| {
+        theme.font_family = "Inter Variable".into();
+        theme.mono_font_family = "JetBrains Mono".into();
+    });
 }
 
 /// Switches the gallery between light and dark after it is running.
@@ -48,6 +46,31 @@ pub fn set_theme(dark: bool) {
     });
 }
 
+/// Opens a single-threaded web platform that lets the browser draw the text
+/// the bundled fonts cannot.
+///
+/// The gallery bundles only the glyphs its own source uses, so emoji and
+/// anything a visitor types into an input would otherwise render as tofu.
+/// `gpui_web` measures and rasterizes such graphemes with Canvas 2D using the
+/// visitor's local fonts. Its default policy covers emoji alone; CJK text is
+/// opted in here as well, since the bundled Noto Sans SC subset only holds
+/// the characters the stories mention. Bundled fonts stay preferred wherever
+/// they have the glyph.
+#[cfg(target_family = "wasm")]
+fn web_application() -> Application {
+    use gpui_kit::web::{CanvasFontFallback, WebBackendPreference, WebPlatform};
+    use std::rc::Rc;
+    use std::sync::Arc;
+
+    let platform = Rc::new(WebPlatform::new_with_backend_and_font_fallback(
+        false,
+        WebBackendPreference::Auto,
+        CanvasFontFallback::EmojiAndCjk,
+    ));
+    let http_client = Arc::new(platform.fetch_http_client());
+    Application::with_platform(platform).with_http_client(http_client)
+}
+
 #[wasm_bindgen]
 pub fn run(story: Option<String>, dark: Option<bool>) -> Result<(), JsValue> {
     console_error_panic_hook::set_once();
@@ -63,7 +86,7 @@ pub fn run(story: Option<String>, dark: Option<bool>) -> Result<(), JsValue> {
     #[cfg(not(target_family = "wasm"))]
     let app = gpui_kit::application();
     #[cfg(target_family = "wasm")]
-    let app = gpui_kit::platform::single_threaded_web();
+    let app = web_application();
 
     let app = app.with_assets(Assets::new("https://gpui-kit.com/gallery/"));
     let launch = move |cx: &mut App| {
@@ -72,10 +95,11 @@ pub fn run(story: Option<String>, dark: Option<bool>) -> Result<(), JsValue> {
         // Load a compact, offline font stack for WASM, where host system fonts
         // are unavailable. Inter gives the UI a neutral system-font feel, while
         // the other fonts contain only glyphs used by the story application.
+        // Emoji, and any text outside that set, come from the browser through
+        // the Canvas fallback configured in `web_application`.
         let ui_font = Cow::Borrowed(include_bytes!("../fonts/Inter-Regular.ttf").as_slice());
         let cjk_font =
             Cow::Borrowed(include_bytes!("../fonts/NotoSansSC-Regular-subset.ttf").as_slice());
-        let emoji_font = Cow::Borrowed(include_bytes!("../fonts/NotoEmoji-Regular.ttf").as_slice());
         let jetbrains_mono =
             Cow::Borrowed(include_bytes!("../fonts/JetBrainsMono-Regular.ttf").as_slice());
         // The web platform resolves GPUI's `.SystemUIFont` alias to IBM Plex
@@ -86,13 +110,7 @@ pub fn run(story: Option<String>, dark: Option<bool>) -> Result<(), JsValue> {
         let system_font =
             Cow::Borrowed(include_bytes!("../fonts/IBMPlexSans-Regular.ttf").as_slice());
         cx.text_system()
-            .add_fonts(vec![
-                ui_font,
-                cjk_font,
-                emoji_font,
-                jetbrains_mono,
-                system_font,
-            ])
+            .add_fonts(vec![ui_font, cjk_font, jetbrains_mono, system_font])
             .expect("Failed to load fonts");
 
         // Apply the embedding page's appearance before the first frame, so an
@@ -105,20 +123,19 @@ pub fn run(story: Option<String>, dark: Option<bool>) -> Result<(), JsValue> {
             cx,
         );
 
-        cx.open_window(WindowOptions::default(), move |window, cx| {
+        gpui_kit::open_window(WindowOptions::default(), cx, move |window, cx| {
             let embedded = story.is_some();
             let view = match story.as_deref() {
                 Some(story) => Gallery::embedded_view(story, window, cx),
                 None => Gallery::view(None, window, cx),
             };
-            let story_root = cx.new(|cx| {
+            cx.new(|cx| {
                 if embedded {
                     StoryRoot::embedded(view, window, cx)
                 } else {
                     StoryRoot::new("GPUI Component", view, window, cx)
                 }
-            });
-            cx.new(|cx| Root::new(story_root, window, cx))
+            })
         })
         .expect("Failed to open window");
         cx.activate(true);
