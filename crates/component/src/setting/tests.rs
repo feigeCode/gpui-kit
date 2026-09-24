@@ -1,6 +1,7 @@
 use super::*;
 use crate::{
     Root,
+    group_box::GroupBoxVariant,
     setting::{SettingGroup, SettingItem},
 };
 use gpui::{
@@ -180,6 +181,33 @@ fn search_preserves_group_and_item_identity(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn footer_follows_group_search_visibility(cx: &mut TestAppContext) {
+    let (host, cx) = setup(cx);
+    cx.update(|_, cx| {
+        host.update(cx, |host, cx| {
+            host.pages[1].groups[2] = host.pages[1].groups[2].clone().footer(|_, _| {
+                div()
+                    .child("Changes apply to this device only.")
+                    .debug_selector(|| "font-footer".into())
+            });
+            cx.notify();
+        });
+    });
+    search(&host, "font", cx);
+    assert!(cx.debug_bounds("setting-1-2-1").is_some());
+    assert!(cx.debug_bounds("font-footer").is_some());
+
+    // Footer copy does not independently make a group match the query.
+    search(&host, "colors", cx);
+    assert!(cx.debug_bounds("setting-1-1-0").is_some());
+    assert!(cx.debug_bounds("font-footer").is_none());
+
+    search(&host, "font", cx);
+    assert!(cx.debug_bounds("font-footer").is_some());
+    assert_eq!(selection(&host, cx), (1, None));
+}
+
+#[gpui::test]
 fn resetting_search_results_leaves_hidden_settings_unchanged(cx: &mut TestAppContext) {
     use std::{cell::Cell, rc::Rc};
 
@@ -203,4 +231,103 @@ fn resetting_search_results_leaves_hidden_settings_unchanged(cx: &mut TestAppCon
     });
     assert!(!visible.get());
     assert!(hidden.get());
+}
+
+struct VariantHost {
+    pages: Vec<SettingPage>,
+    outline: bool,
+}
+
+impl Render for VariantHost {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut settings = Settings::new("variant-test").pages(self.pages.clone());
+        if self.outline {
+            settings = settings.with_group_variant(GroupBoxVariant::Outline);
+        }
+        div()
+            .size_full()
+            .child(settings.render(window, cx).into_any_element())
+    }
+}
+
+fn variant_pages(override_first_group: bool) -> Vec<SettingPage> {
+    let first = if override_first_group {
+        SettingGroup::new().variant(GroupBoxVariant::Normal)
+    } else {
+        SettingGroup::new()
+    };
+    vec![SettingPage::new("General").groups([
+        first.item(item("plain")),
+        SettingGroup::new().item(item("outlined")),
+    ])]
+}
+
+#[gpui::test]
+fn group_variant_overrides_the_settings_default(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::init(cx);
+        crate::Theme::global_mut(cx).font_size = px(16.);
+    });
+
+    let open_window = |pages, outline, cx: &mut TestAppContext| {
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let view = cx.new(|_| VariantHost { pages, outline });
+            Root::new(view, window, cx)
+        });
+        cx.simulate_resize(size(px(1000.), px(700.)));
+        draw(cx);
+        (
+            cx.debug_bounds("setting-0-0-0").unwrap(),
+            cx.debug_bounds("setting-0-1-0").unwrap(),
+        )
+    };
+
+    // Baseline: no global variant, so both groups present their items directly.
+    let (baseline_first, baseline_second) = open_window(variant_pages(false), false, cx);
+    // A global Outline default with the first group overriding back to Normal.
+    let (overridden_first, inherited_second) = open_window(variant_pages(true), true, cx);
+
+    // The override presents the group exactly like the settings-level default.
+    assert_eq!(
+        f64::from(overridden_first.top() - baseline_first.top()),
+        0.,
+        "the overridden group must lose the global Outline chrome"
+    );
+    // A group without the override keeps the global Outline chrome:
+    // a 1px border and 16px padding above its items.
+    assert_eq!(
+        f64::from(inherited_second.top() - baseline_second.top()),
+        17.,
+        "groups without an override must keep the settings-level variant"
+    );
+}
+
+#[gpui::test]
+fn selecting_a_group_from_another_page_scrolls_to_it(cx: &mut TestAppContext) {
+    let (host, cx) = setup(cx);
+    // Push Fonts below the viewport.
+    cx.update(|_, cx| {
+        host.update(cx, |host, cx| {
+            host.pages[1].groups[1].items = vec![item_with_height("theme colors", 900.)];
+            cx.notify();
+        });
+    });
+    draw(cx);
+    let select = |page_ix, group_ix: Option<usize>, cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            let state = host.read(cx).state.clone().unwrap();
+            state.update(cx, |state, cx| {
+                state.selected_index = SelectIndex { page_ix, group_ix };
+                state.deferred_scroll_group_ix = group_ix;
+                cx.notify();
+            });
+        });
+        draw(cx);
+    };
+
+    // Leaving the page drops its list state; the jump back must not land at the top.
+    select(0, None, cx);
+    select(1, Some(2), cx);
+    let target = cx.debug_bounds("setting-1-2-1").unwrap();
+    assert!(target.top() >= px(0.) && target.bottom() <= px(700.));
 }

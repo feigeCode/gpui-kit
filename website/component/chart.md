@@ -90,6 +90,34 @@ LineChart::new(data)
     .tick_margin(2)
 ```
 
+`LineChart` also takes `y_domain` and `point_count`; see Pinned Axis and
+Unfinished Series under AreaChart.
+
+#### Axes and Guides
+
+`LineChart` and `AreaChart` share these. `y_axis` shows tick labels at the y ticks, in a gutter left of the plot by default, which widens to fit the widest label, or over the plot with `y_axis_label_placement(AxisLabelPlacement::Inside)`. `y_tick_count` sets how many ticks there are, evenly spaced from the baseline to the top edge with both ends included; they place the horizontal grid lines too, and each label reads the value the scale puts at its height. The default of 5 is the grid the charts have always drawn. `y_tick_format` writes the label text from that value.
+
+`x_tick_count` labels only that many x values, spread evenly from the first to the last, instead of every `tick_margin`-th; with `point_count` set they spread over every point the axis is laid out for, so they stay put as the data grows. `grid_columns` adds vertical grid lines, `grid_dashed(false)` draws the grid solid, `reference_line` marks a value with a dashed line across the plot, drawn darker than the grid, and `y_padding` sets the space kept above the highest value and below the lowest, 10px and 0 by default.
+
+```rust
+use gpui_kit::component::plot::AxisLabelPlacement;
+
+// An intraday chart: labels over the plot, a solid grid, the previous close marked
+AreaChart::new(minutes)
+    .x(|d| d.time.clone())
+    .y(|d| d.price)
+    .y_domain(low, high)
+    .y_axis(true)
+    .y_axis_label_placement(AxisLabelPlacement::Inside)
+    .y_tick_count(3)
+    .y_tick_format(|v| format!("{v:.2}"))
+    .x_tick_count(3)
+    .grid_columns(4)
+    .grid_dashed(false)
+    .reference_line(prev_close)
+    .y_padding(6., 6.)
+```
+
 ### BarChart
 
 A bar chart uses rectangular bars to show comparisons among categories. Bars can be oriented vertically or horizontally via the `alignment` option.
@@ -248,12 +276,11 @@ BarChart::new(data)
 
 #### Bar Chart Value Axis
 
-Show tick labels for the value scale with `value_axis`, and control how many even
-intervals the scale is divided into with `value_tick_count`. The count drives both
-the grid line spacing and the tick labels, so the two always agree.
-
-Note that `value_tick_count` is a count, whereas `tick_margin` is a stride over
-the band-axis categories — `tick_margin(2)` keeps every second category label.
+Show tick labels for the value scale with `value_axis`, and set how many ticks it
+carries with `value_tick_count`. The ticks are evenly spaced from the baseline to
+the far edge with both ends included, and drive both the grid lines and the tick
+labels, so the two always agree. `tick_margin`, by contrast, is a stride over the
+band-axis categories: `tick_margin(2)` keeps every second category label.
 
 ```rust
 // Value labels left of vertical bars, below horizontal ones
@@ -262,13 +289,49 @@ BarChart::new(data)
     .value(|d| d.value)
     .value_axis(true)
 
-// Divide the value scale into 6 intervals instead of the default 4
+// 7 ticks instead of the default 5
 BarChart::new(data)
     .band(|d| d.category.clone())
     .value(|d| d.value)
     .value_axis(true)
-    .value_tick_count(6)
+    .value_tick_count(7)
 ```
+
+`value_axis_label_placement(AxisLabelPlacement::Inside)` draws the labels over the plot beside their grid lines, so the bars keep the room a gutter would take, and `value_tick_format` writes their text. `band_count` lays the band axis out for more bands than there is data, so a short series keeps each bar's width and fills only the leading bands. `band_tick_count` labels only that many bands, spread evenly from the first to the last (over every band when `band_count` is set), and `grid_dashed(false)` draws the grid solid.
+
+```rust
+use gpui_kit::component::plot::AxisLabelPlacement;
+
+// A value per day over the last 20 days, however many have data yet
+BarChart::new(days)
+    .band(|d| d.date.clone())
+    .value(|d| d.value)
+    .value_axis(true)
+    .value_axis_label_placement(AxisLabelPlacement::Inside)
+    .value_tick_count(2)
+    .value_tick_format(|v| format!("{v:.2}"))
+    .band_count(20)
+    .band_tick_count(2)
+    .grid_dashed(false)
+```
+
+#### Bar Chart Labels and Spacing
+
+`label_color` colors each bar's `label` text, so a count can take its bar's color instead of the foreground. `padding_inner` and `padding_outer` set the gap between bars and before the first and after the last, as shares of a band; they default to 0.4 and 0.2. `min_length` draws every bar at least that many pixels long, so an empty bucket still shows a stub on the baseline.
+
+```rust
+// A distribution: narrow bars, counts in their bar's color, a stub for zero
+BarChart::new(buckets)
+    .band(|d| d.range.clone())
+    .value(|d| d.count)
+    .fill(|d, _, _, _| d.color)
+    .label(|d| d.count.to_string())
+    .label_color(|d| d.color)
+    .padding_inner(0.6)
+    .min_length(2.)
+```
+
+A stub grows the way its bar's value would: away from the zero line, to the negative side for a negative value and to the positive side for zero. Vertical bars with a `label` keep a line of text clear above the tallest bar, so its label stays inside the chart.
 
 ### AreaChart
 
@@ -317,6 +380,27 @@ AreaChart::new(data)
     .y(|d| d.value)
     .linear()  // or .step_after()
 ```
+
+#### Pinned Axis and Unfinished Series
+
+By default the y axis fits the data from zero. `y_domain` pins it to a range instead, so a price or a balance that never nears zero is not pressed flat against the top. `point_count` lays the x axis out for more points than the data has, so a series still in progress, such as today's intraday prices, fills only the leading part. `LineChart` takes both as well.
+
+```rust
+// An intraday price thumbnail: 390 one-minute points in a US session.
+AreaChart::new(minutes)
+    .x(|d| d.time.clone())
+    .y(|d| d.price)
+    .linear()
+    .y_domain(low, high)
+    .point_count(390)
+    .x_axis(false)
+    .grid(false)
+    .interactive(false)
+```
+
+A pinned range keeps the 10px of headroom the default leaves above the highest value, and the series are clipped to the plot, so a value outside the range stops at its edge. Nothing is drawn when `min` equals `max`, so widen a flat series before passing it in. A natural curve can swing past its highest and lowest points; prefer `linear` when the range is fitted tightly to the data.
+
+The i-th item of data sits on the i-th point, so the data has to be contiguous from the first point: a missing item shifts every later one a point to the left.
 
 ### PieChart
 
@@ -602,26 +686,59 @@ Every node stays exactly filled by its ribbons under either scale, so children a
 
 ## Hover and Tooltips
 
-Every chart is a static plot until it is given an `id`. With one, it hit-tests the cursor, shows a tooltip for the datum under it, and emphasizes that datum the way the chart's kind calls for:
+Every chart hit-tests the cursor, shows a tooltip for the datum under it, and emphasizes that datum the way the chart's kind calls for. Nothing opts in:
 
 ```rust
 LineChart::new(data)
     .x(|d| d.date.clone())
     .y(|d| d.value)
     .name("Desktop") // The series name in the tooltip row
-    .id("visitors")  // Unique among sibling elements
 ```
 
 | Chart | On hover |
 | --- | --- |
 | `LineChart`, `AreaChart` | A crosshair and a dot per series glide along the line to the hovered point; the dot grows a halo. |
 | `BarChart` | A highlight band the width of a bar slides to the hovered bar, and the other bars fade behind it. |
-| `PieChart` | The hovered slice lifts out of the ring and the others fade; the tooltip shows the value and its share. |
+| `PieChart` | The hovered slice lifts out of the ring and the others fade; the tooltip shows the value and its share, via `tooltip_value` if one is set. |
 | `RadarChart` | A dot per series glides along the polygon to the hovered spoke. |
 | `CandlestickChart` | A highlight band slides to the hovered candle; the tooltip lists open, high, low and close. |
-| `SankeyChart` | The links of the hovered node keep their color while the rest fade; the tooltip shows the node's label and throughput. |
+| `SankeyChart` | The links of the hovered node keep their color while the rest fade; the tooltip shows the node's name and throughput, via `tooltip_name` / `tooltip_value` if set. |
 
 The tooltip box follows the cursor, flipping toward the center of the plot near each edge. `AreaChart` and `RadarChart` take one `.name()` per series, called after the matching `.y()` / `.value()`.
+
+A tooltip row reads as a swatch, a name and a value. `PieChart::tooltip_name` and `SankeyChart::tooltip_name` set that name from the datum under the cursor — the slice's name, the node's name — which for a chart showing one number per datum is what the row wants. Unset, a pie falls back to `name`, the single name the whole series carries, and a sankey's row carries no name at all: a swatch and a number with a gap between them.
+
+`name` cannot stand in for it. It says what the numbers measure, the same for every slice, so it can never say which slice the tooltip is about. Titling the tooltip from `label` cannot either, since `label` also draws the leader lines around the ring, and a sankey's `node_label` likewise writes beside the node.
+
+`PieChart::tooltip_value` replaces the text of its row, which the default writes as the raw value and its share. Set it wherever the raw number is not what a reader should see — a value that is already a ratio reads as `0.35 (35.0%)` otherwise, and a chart drawn from adjusted values, such as a floor that keeps a hairline slice visible, would report the adjustment as though it were the datum:
+
+```rust
+PieChart::new(holdings)
+    .value(|d| d.ratio.max(MIN_VISIBLE))     // Drawn with a floor
+    .tooltip_name(|d| d.name.clone())        // Named without leader lines
+    .tooltip_value(|d, _, _| pct(d.ratio))   // Read as it truly is
+```
+
+### Identity
+
+All of it is keyed on an `ElementId`, which a chart takes from the source location it was constructed at — unique for a chart written out once, which is nearly every chart. Where one construction site renders several charts as siblings, name them apart, or they share one hover state and one cache:
+
+```rust
+shares.iter().enumerate().map(|(i, share)| PieChart::new(share.clone()).id(("share", i)))
+```
+
+A `GlobalElementId` is the whole id stack, so siblings that already carry an id of their own — rows drawn by `List` or `uniform_list`, say — separate the charts beneath them without help.
+
+### Turning it off
+
+`interactive(false)` takes the whole layer away, hitbox included, the way Highcharts' `enableMouseTracking` or ECharts' `silent` does. Reach for it in two places: a chart that only decorates, and a chart something else is drawn over:
+
+```rust
+AreaChart::new(placeholder).interactive(false) // A skeleton, a thumbnail
+AreaChart::new(range).interactive(false)       // A backdrop under drag handles
+```
+
+The second matters because a plain hitbox does not block the one behind it: an element painted over an interactive chart is hovered *and so is the chart*, so the crosshair keeps tracking under it. The chart has to stand down.
 
 ### Motion
 
@@ -629,32 +746,17 @@ The emphasis is animated with the styled layer's motion tokens (`cx.theme().moti
 
 ### Caching
 
-An identified chart also keeps its heavy geometry across frames, since a chart repaints on every frame it is on screen: line and area strokes and pie slices stay tessellated while their projected points are unchanged, and a sankey diagram keeps its placement while its data, settings and size are unchanged. Charts without an `id` rebuild everything on each paint, as sibling charts would otherwise share one cache.
+A chart also keeps its heavy geometry across frames, since it repaints on every frame it is on screen: line and area strokes and pie slices stay tessellated while their projected points are unchanged, and a sankey diagram keeps its placement while its data, settings and size are unchanged. This cache hangs off the same id, so charts sharing one share the cache and thrash it — another reason to name siblings apart — and a chart with `interactive(false)`, having no id of its own, rebuilds its geometry on each paint.
 
 ### Custom Plots
 
-A custom [`Plot`] opts in the same way: return the id from `Plot::id`, resolve the datum under the cursor in `Plot::tooltip_state`, and build the overlay in `Plot::tooltip`. To animate the emphasis, implement `Plot::hover`, which runs each frame before `tooltip` and `paint` with the [`PlotHover`] in focus — it carries the `TooltipState` and lingers after the cursor leaves while `hover.focus()` eases back to zero, so sample the motion there and keep the result on `self` for the other two methods. A `Tooltip` returned from `tooltip` fades with the hover on its own:
+A custom [`Plot`] opts in by hand — `Plot::id` defaults to `None` there: return an id from it, resolve the datum under the cursor in `Plot::tooltip_state`, and build the overlay in `Plot::tooltip`. The `Tooltip` returned there animates the hover on its own, the same way the built-in charts do: the whole overlay fades with the hover, the crosshair and dots glide to each hovered datum on the pointer spring, adopting it on the frame the cursor lands, and a dot's `halo` grows as the hover fades in. A crosshair glides along the axis it marks only, so a line that also follows the cursor keeps up with it. Pass the data point itself; the tooltip does the rest:
 
 ```rust
-fn hover(&mut self, hover: Option<&PlotHover>, window: &mut Window, cx: &mut App) {
-    self.band_center = hover.map(|hover| {
-        spring(
-            ("my-plot", "band"),
-            hover.state().cross_line.x,
-            // Adopt the datum on the first hovered frame instead of travelling
-            // from where the last hover ended.
-            cx.theme().motion_tokens().spring_control.with_travel(!hover.is_entering()),
-            window,
-            cx,
-        )
-    });
-}
-
 fn tooltip(&self, state: &TooltipState, cursor: Point<Pixels>, bounds: Bounds<Pixels>, _: &mut Window, cx: &mut App) -> Option<AnyElement> {
-    let center = self.band_center.unwrap_or(state.cross_line.x);
     Some(
         Tooltip::new(cursor, bounds.size)
-            .cross_line(CrossLine::new(point(center, state.cross_line.y)).band(px(24.)))
+            .cross_line(CrossLine::new(state.cross_line).band(px(24.)))
             .title("Title")
             .row(cx.theme().chart_1, "Series", "42")
             .into_any_element(),
@@ -662,7 +764,14 @@ fn tooltip(&self, state: &TooltipState, cursor: Point<Pixels>, bounds: Bounds<Pi
 }
 ```
 
-`Dot::halo(size)` draws the translucent ring the built-in charts put behind a hovered dot.
+To emphasize the plot's own graphics as well — fade the bars around the hovered one, lift a slice — implement `Plot::hover`, which runs each frame before `tooltip` and `paint` with the [`PlotHover`] in focus. It carries the `TooltipState` and lingers after the cursor leaves while `hover.focus()` eases back to zero, so sample the motion there and keep the result on `self`. `hover.glide` follows a position on the same spring the tooltip uses; hand the result to the crosshair and turn the tooltip's own glide off with `Tooltip::glide(false)`, so it springs once:
+
+```rust
+fn hover(&mut self, hover: Option<&PlotHover>, window: &mut Window, cx: &mut App) {
+    self.band_center =
+        hover.map(|hover| hover.glide(("my-plot", "band"), hover.state().cross_line.x, window, cx));
+}
+```
 
 ## Data Structures
 

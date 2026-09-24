@@ -292,6 +292,11 @@ impl Button {
         self.variant
     }
 
+    #[cfg(test)]
+    pub(crate) fn is_compact(&self) -> bool {
+        self.compact
+    }
+
     /// Presentation supplied by a styled compound control. Standalone buttons
     /// retain their normal size-derived content style.
     pub(crate) fn content_style(mut self, style: StyleRefinement, icon_size: Size) -> Self {
@@ -563,6 +568,10 @@ impl Sizable for Button {
     fn with_size(mut self, size: impl Into<Size>) -> Self {
         self.size = size.into();
         self
+    }
+
+    fn prepare_for_toolbar(self) -> Self {
+        self.ghost().compact()
     }
 }
 

@@ -1,6 +1,6 @@
 [package]
 name = "gpui-kit"
-version = "0.6.4"
+version = "0.6.5"
 description = "GPUI Kit: one dependency for building desktop applications with GPUI, GPUI Base, GPUI Component and default assets."
 keywords = ["desktop", "gpui", "shadcn", "ui", "uikit"]
 categories = ["gui"]
@@ -79,6 +79,7 @@ gpui_platform.workspace = true
 gpui_web.workspace = true
 
 [dev-dependencies]
+chrono = "0.4.38"
 gpui = { workspace = true, features = ["test-support"] }
 
 [[test]]
@@ -99,6 +100,10 @@ required-features = ["test-support", "component"]
 
 [[test]]
 name = "ui"
+required-features = ["test-support", "component"]
+
+[[test]]
+name = "root"
 required-features = ["test-support", "component"]
 
 [[test]]

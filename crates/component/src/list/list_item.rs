@@ -1,7 +1,7 @@
 use crate::{ActiveTheme, Disableable, Icon, Selectable, Sizable as _, StyledExt, h_flex};
 use gpui::{
     AnyElement, App, ClickEvent, Div, ElementId, InteractiveElement, Interactivity, IntoElement,
-    MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, RenderOnce, Stateful,
+    MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, RenderOnce, SharedString, Stateful,
     StatefulInteractiveElement, StyleRefinement, Styled, Window, div, prelude::FluentBuilder as _,
 };
 use gpui_base::TestSupportExt as _;
@@ -38,6 +38,7 @@ pub struct ListItem {
     on_mouse_enter: Option<Box<dyn Fn(&MouseMoveEvent, &mut Window, &mut App) + 'static>>,
     suffix: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyElement + 'static>>,
     children: SmallVec<[AnyElement; 2]>,
+    accessibility_label: Option<SharedString>,
 }
 
 impl ListItem {
@@ -57,6 +58,7 @@ impl ListItem {
             check_icon: None,
             suffix: None,
             children: SmallVec::new(),
+            accessibility_label: None,
         }
     }
 
@@ -81,6 +83,15 @@ impl ListItem {
     /// Set ListItem as the confirmed item style, it will show a check icon.
     pub fn confirmed(mut self, confirmed: bool) -> Self {
         self.confirmed = confirmed;
+        self
+    }
+
+    /// Set the accessibility label of the list item.
+    ///
+    /// Without this, list rows are exposed to assistive technology without a
+    /// name — the visible children do not become the item's accessible name.
+    pub fn accessibility_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.accessibility_label = Some(label.into());
         self
     }
 
@@ -175,9 +186,14 @@ impl StatefulInteractiveElement for ListItem {}
 
 impl RenderOnce for ListItem {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let accessibility_label = self.accessibility_label;
         let is_active = self.confirmed || self.selected || self.secondary_selected;
 
         let is_selectable = !(self.disabled || self.mode.is_separator());
+
+        // The outline is an absolute child, so it has to repeat the item's own radius.
+        let mut outline_style = StyleRefinement::default();
+        outline_style.corner_radii = self.style.corner_radii.clone();
 
         self.base
             .test_support()
@@ -191,6 +207,7 @@ impl RenderOnce for ListItem {
             .items_center()
             .justify_between()
             .refine_style(&self.style)
+            .when_some(accessibility_label, |this, label| this.aria_label(label))
             .when(is_selectable, |this| {
                 this.when_some(self.on_click, |this, on_click| this.on_click(on_click))
                     .when_some(self.on_mouse_enter, |this, on_mouse_enter| {
@@ -205,8 +222,14 @@ impl RenderOnce for ListItem {
                                 })
                             })
                     })
-                    .when(!is_active, |this| {
-                        this.hover(|this| this.bg(cx.theme().tokens.list_hover))
+                    // Register `hover` unconditionally, a conditional registration
+                    // leaves a stale hover style behind when the item turns active.
+                    .hover(|this| {
+                        if is_active {
+                            this
+                        } else {
+                            this.bg(cx.theme().tokens.list_hover)
+                        }
                     })
             })
             .when(!is_selectable, |this| {
@@ -231,18 +254,24 @@ impl RenderOnce for ListItem {
                     }),
             )
             .when_some(self.suffix, |this, suffix| this.child(suffix(window, cx)))
-            .map(|this| {
-                if is_selectable && (self.selected || self.secondary_selected) {
-                    let bg = if self.selected && cx.theme().list.active_highlight {
-                        cx.theme().list_active
-                    } else {
-                        cx.theme().accent
-                    };
-
-                    this.when(!self.secondary_selected, |this| this.bg(bg))
+            .when(is_selectable && self.selected, |this| {
+                let bg = if cx.theme().list.active_highlight {
+                    cx.theme().list_active
                 } else {
-                    this
-                }
+                    cx.theme().accent
+                };
+
+                this.bg(bg)
+            })
+            .when(is_selectable && self.secondary_selected, |this| {
+                this.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .border_1()
+                        .border_color(cx.theme().selection)
+                        .refine_style(&outline_style),
+                )
             })
     }
 }

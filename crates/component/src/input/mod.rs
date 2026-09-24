@@ -30,14 +30,14 @@ pub use gpui_base::input::{
     FoldRange, GoToDefinition, GutterLane, GutterLaneOptions, GutterMarker, GutterMarkerRenderer,
     HighlightStyleResolver, HoverPopoverState, HoverProvider, Indent, IndentInline, InlineWidget,
     InlineWidgetCollection, InputEdit, InputEvent, InputHighlighter, InputHighlighterFactory,
-    InputState, Lsp, MaskPattern, MoveDown, MoveEnd, MoveHome, MoveLeft, MovePageDown, MovePageUp,
-    MoveRight, MoveToEnd, MoveToEndOfLine, MoveToNextWord, MoveToPreviousWord, MoveToStart,
-    MoveToStartOfLine, MoveUp, Outdent, OutdentInline, Paste, Point, RangeDecoration,
-    RangeDecorationCollection, RangeDecorationStyle, Redo, Replace, Rope, RopeExt, RopeLines,
-    Search, SelectAll, SelectToEnd, SelectToEndOfLine, SelectToNextWordEnd,
-    SelectToPreviousWordStart, SelectToStart, SelectToStartOfLine, Selection, ShowCharacterPalette,
-    ShowDocumentHandler, TabSize, TextDecoration, TextDecorationCollection, TextareaState,
-    ToggleCodeActions, Undo, WrappingIndent,
+    InputState, Lsp, MaskPattern, MoveDown, MoveEnd, MoveHome, MoveLeft, MovePageDown,
+    MovePageUp, MoveRight, MoveToEnd, MoveToEndOfLine, MoveToNextWord, MoveToPreviousWord,
+    MoveToStart, MoveToStartOfLine, MoveUp, Outdent, OutdentInline, Paste, Point,
+    RangeDecoration, RangeDecorationCollection, RangeDecorationStyle, Redo, Replace, Rope,
+    RopeExt, RopeLines, Search, SelectAll, SelectToEnd, SelectToEndOfLine, SelectToNextWordEnd,
+    SelectToPreviousWordStart, SelectToStart, SelectToStartOfLine, Selection,
+    ShowCharacterPalette, ShowDocumentHandler, TabSize, TextDecoration, TextDecorationCollection,
+    TextareaState, ToggleCodeActions, Undo, WrappingIndent,
 };
 pub use gpui_base::input::{EditorMode, InputMode, InputModeKind, TextareaMode};
 #[doc(hidden)]

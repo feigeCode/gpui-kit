@@ -278,9 +278,8 @@ impl TabGroup {
             active_panel: self.active_panel(cx),
             active_ix: self.active_ix,
             zoomed: self.zoomed,
-            collapsed: self.constraints.is_collapsed(),
-            closable: self.is_closable(cx),
-            locked: self.is_locked(),
+            constraints: self.constraints,
+            active_panel_closable: self.is_closable(cx),
             draggable: self.draggable(cx),
             droppable: self.droppable(),
             // A stale indicator would otherwise outlive a drag that was
@@ -772,11 +771,10 @@ pub struct TabGroupContext {
     active_panel: Option<Arc<dyn PanelView>>,
     active_ix: usize,
     zoomed: bool,
-    collapsed: bool,
-    locked: bool,
+    constraints: TabGroupConstraints,
     draggable: bool,
     droppable: bool,
-    closable: bool,
+    active_panel_closable: bool,
     drop_indicator: Option<DropIndicator>,
     on_select_tab: SelectTabHandler,
     on_close: ClosePanelHandler,
@@ -817,17 +815,27 @@ impl TabGroupContext {
     }
 
     pub fn is_collapsed(&self) -> bool {
-        self.collapsed
+        self.constraints.is_collapsed()
     }
 
-    /// Whether closing the displayed panel is allowed at all, so a skin knows
-    /// whether to offer a Close control.
+    /// Whether the active panel can be closed.
     pub fn is_closable(&self) -> bool {
-        self.closable
+        self.active_panel_closable
+    }
+
+    /// Whether `panel` can be closed from this group. Uses the same constraints
+    /// as [`TabGroup::close_panel`], including the panel's own `closable` flag.
+    pub fn is_panel_closable(&self, panel: PanelId, cx: &App) -> bool {
+        self.constraints.is_closable()
+            && self.draggable
+            && self
+                .panels
+                .iter()
+                .any(|candidate| candidate.panel_id(cx) == panel && candidate.closable(cx))
     }
 
     pub fn is_locked(&self) -> bool {
-        self.locked
+        self.constraints.is_locked() || self.zoomed
     }
 
     pub fn is_draggable(&self) -> bool {
@@ -899,6 +907,8 @@ pub trait TabGroupRenderer: 'static {
     /// Appearance only. The group is laid out as a column that fills its slot
     /// around whatever this returns, because a group that does not is a strip
     /// of tabs with no content under it.
+    /// A renderer that needs the painted group bounds can attach `on_prepaint`
+    /// here and identify the group with [`TabGroupContext::node`].
     fn frame(&self, group: &TabGroupContext, window: &mut Window, cx: &mut App) -> Stateful<Div> {
         div().id("tab-group")
     }

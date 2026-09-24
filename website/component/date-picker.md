@@ -11,8 +11,9 @@ A flexible date picker component with calendar interface that supports single da
 
 ```rust
 use gpui_kit::component::{
-    date_picker::{DatePicker, DatePickerState, DateRangePreset, DatePickerEvent},
+    date_picker::{DatePicker, DatePickerState, DateRangePreset, DatePickerEvent, DateTime},
     calendar::{Date, Matcher},
+    time_field::{HourCycle, TimePrecision},
 };
 ```
 
@@ -66,6 +67,71 @@ let range_picker = cx.new(|cx| {
 DatePicker::new(&range_picker)
     .number_of_months(2)
 ```
+
+### Date and Time
+
+Set a `time_precision` to edit the time of day as well. The popup then shows a
+time field below the calendar and stays open after a date is picked, so the
+time can be adjusted next. Every edit is reported as it happens. Clicking the
+selected date again — or double-clicking a date — confirms it and closes the
+popup, as do Enter, Escape and a click outside.
+
+```rust
+use chrono::NaiveTime;
+
+let date_time_picker = cx.new(|cx| {
+    DatePickerState::new(window, cx)
+        .time_precision(TimePrecision::Minute) // or TimePrecision::Second
+        .default_time(NaiveTime::from_hms_opt(9, 0, 0).unwrap())
+});
+
+DatePicker::new(&date_time_picker)
+```
+
+The time uses a 24-hour clock by default. Use `hour_cycle` for a 12-hour clock
+with an AM/PM segment:
+
+```rust
+DatePickerState::new(window, cx)
+    .time_precision(TimePrecision::Minute)
+    .hour_cycle(HourCycle::H12) // 09:30 PM
+```
+
+`default_time` is the time a date gets before the user edits it, `00:00`
+unless configured. The display format follows the precision and hour cycle
+(for example `%Y/%m/%d %H:%M` or `%Y/%m/%d %I:%M %p`) unless `date_format` is
+set.
+
+Read and write the whole value with `date_time` and `set_date_time`; `date`
+and `set_date` still address the date part and keep the current time.
+
+```rust
+use chrono::Local;
+
+date_time_picker.update(cx, |state, cx| {
+    state.set_date_time(Local::now().naive_local(), window, cx);
+});
+
+if let DateTime::Single(Some(at)) = date_time_picker.read(cx).date_time() {
+    println!("Selected {at}");
+}
+```
+
+A range picker edits dates only, even with a `time_precision`. For a range
+with times, place two pickers side by side and validate the order in the
+owner:
+
+```rust
+h_flex()
+    .gap_2()
+    .child(DatePicker::new(&start_picker))
+    .child("–")
+    .child(DatePicker::new(&end_picker))
+```
+
+In the time field, Up/Down change the selected segment, Left/Right and
+Tab/Shift-Tab move between segments, digits type a value and advance to the
+next segment, `a`/`p` set AM or PM, and Backspace resets the segment.
 
 ### With Custom Date Format
 
@@ -280,8 +346,8 @@ let date_picker = cx.new(|cx| DatePickerState::new(window, cx));
 
 cx.subscribe(&date_picker, |view, _, event, _| {
     match event {
-        DatePickerEvent::Change(date) => {
-            match date {
+        DatePickerEvent::Change(value) => {
+            match value.date() {
                 Date::Single(Some(selected_date)) => {
                     println!("Single date selected: {}", selected_date);
                 }
@@ -339,16 +405,18 @@ let max_30_days_picker = cx.new(|cx| DatePickerState::range(window, cx));
 
 cx.subscribe(&max_30_days_picker, |view, picker, event, _| {
     match event {
-        DatePickerEvent::Change(Date::Range(Some(start), Some(end))) => {
-            let duration = end.signed_duration_since(*start).num_days();
+        DatePickerEvent::Change(value) => {
+            let Date::Range(Some(start), Some(end)) = value.date() else {
+                return;
+            };
+            let duration = end.signed_duration_since(start).num_days();
             if duration > 30 {
                 // Reset to start date only if range exceeds 30 days
                 picker.update(cx, |state, cx| {
-                    state.set_date(Date::Range(Some(*start), None), window, cx);
+                    state.set_date(Date::Range(Some(start), None), window, cx);
                 });
             }
         }
-        _ => {}
     }
 });
 

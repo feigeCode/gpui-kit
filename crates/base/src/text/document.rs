@@ -2,11 +2,14 @@ use gpui::{
     App, IntoElement, ListState, ParentElement as _, SharedString, Styled as _, Window, div,
 };
 
-use std::{ops::RangeInclusive, sync::Arc};
+use std::{
+    ops::{Range, RangeInclusive},
+    sync::Arc,
+};
 
 use crate::text::{
     SelectionFormat,
-    node::{BlockNode, NodeContext},
+    node::{BlockNode, NodeContext, SourceRangeSelection},
 };
 
 /// The parsed document AST.
@@ -22,6 +25,7 @@ pub(crate) struct NodeRenderOptions {
     pub(crate) in_list: bool,
     pub(crate) todo: bool,
     pub(crate) ordered: bool,
+    pub(crate) list_start: Option<u32>,
     pub(crate) depth: usize,
     pub(crate) is_last: bool,
 }
@@ -148,6 +152,14 @@ impl ParsedDocument {
         }
 
         block.selected_text(SelectionFormat::Source)
+    }
+
+    pub(super) fn selected_source_range(&self) -> Option<Range<usize>> {
+        let mut selected = SourceRangeSelection::Unselected;
+        for block in self.blocks.iter() {
+            selected.merge(block.selected_source_range());
+        }
+        selected.into_range()
     }
 
     /// Synchronously clear the selection stored in every inline state.

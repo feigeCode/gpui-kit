@@ -48,10 +48,21 @@ fn diagnostic_highlight_style(
 
 const BOTTOM_MARGIN_ROWS: usize = 3;
 pub(super) const RIGHT_MARGIN: Pixels = px(10.);
-pub(super) const LINE_NUMBER_RIGHT_MARGIN: Pixels = px(10.);
+pub(super) const LINE_NUMBER_RIGHT_MARGIN: Pixels = px(6.);
 const FOLD_ICON_WIDTH: Pixels = px(14.);
 const FOLD_ICON_HITBOX_WIDTH: Pixels = px(18.);
 const MAX_HIGHLIGHT_LINE_LENGTH: usize = 10_000;
+const MIN_LINE_NUMBER_DIGITS: usize = 3;
+const MAX_LINE_NUMBER_DIGITS: usize = 7;
+const MAX_DISPLAYED_LINE_NUMBER: usize = 9_999_999;
+
+fn line_number_len(total_lines: usize) -> usize {
+    (total_lines.max(1).ilog10() as usize + 1).clamp(MIN_LINE_NUMBER_DIGITS, MAX_LINE_NUMBER_DIGITS)
+}
+
+fn displayed_line_number(number: usize) -> usize {
+    number.min(MAX_DISPLAYED_LINE_NUMBER)
+}
 const FOLD_CHEVRON_RIGHT_SVG: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>"#;
 const FOLD_CHEVRON_DOWN_SVG: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>"#;
 
@@ -600,16 +611,18 @@ impl<M: InputModeKind> TextElement<M> {
                     // Vertical cursor-follow is suppressed while auto-scroll manages the y axis,
                     // to prevent fighting the background scroll task.
                     if !auto_scrolling {
-                        // If we change the scroll_offset.y, GPUI will render and trigger the next run loop.
-                        // So, here we just adjust offset by `line_height` for move smooth.
+                        // Scroll straight to the caret's line. This runs only on
+                        // the frame the selection changed, so a one-line step
+                        // would leave a far-off caret (e.g. after typing at the
+                        // end of a long paste) outside the viewport.
                         scroll_offset.y = if scroll_offset.y + cursor_pos.y
                             > bounds.size.height - top_bottom_margin
                         {
                             // cursor is out of bottom
-                            scroll_offset.y - line_height
+                            bounds.size.height - top_bottom_margin - cursor_pos.y
                         } else if scroll_offset.y + cursor_pos.y < top_bottom_margin {
                             // cursor is out of top
-                            (scroll_offset.y + line_height).min(px(0.))
+                            (top_bottom_margin - cursor_pos.y).min(px(0.))
                         } else {
                             scroll_offset.y
                         };
@@ -765,6 +778,8 @@ impl<M: InputModeKind> TextElement<M> {
         &self,
         last_layout: &LastLayout,
         bounds: &Bounds<Pixels>,
+        window: &Window,
+        content_mask: Bounds<Pixels>,
         cx: &App,
     ) -> (Vec<(Path<Pixels>, Hsla)>, Vec<(Path<Pixels>, Hsla)>) {
         let state = self.state.read(cx);
@@ -803,15 +818,22 @@ impl<M: InputModeKind> TextElement<M> {
                     else {
                         continue;
                     };
-                    let points = frame_outline_points(&corners);
+                    let origin = bounds.origin + point(last_layout.line_number_width, px(0.));
+                    let corners = pad_frame_corners(&corners, px(1.));
+                    let points = frame_outline_points(&corners)
+                        .into_iter()
+                        .map(|point| origin + point)
+                        .collect::<Vec<_>>();
+                    let (stroke_width, points) =
+                        snap_frame_outline(&points, px(1.), window.scale_factor());
+                    let points = clamp_frame_to_content_mask(points, stroke_width, content_mask);
                     let Some(first) = points.first().copied() else {
                         continue;
                     };
-                    let origin = bounds.origin + point(last_layout.line_number_width, px(0.));
-                    let mut builder = gpui::PathBuilder::stroke(px(1.));
-                    builder.move_to(origin + first);
+                    let mut builder = gpui::PathBuilder::stroke(stroke_width);
+                    builder.move_to(first);
                     for point in points.iter().skip(1) {
-                        builder.line_to(origin + *point);
+                        builder.line_to(*point);
                     }
                     builder.close();
                     if let Ok(path) = builder.build() {
@@ -1041,9 +1063,9 @@ impl<M: InputModeKind> TextElement<M> {
         window: &mut Window,
     ) -> (Pixels, usize) {
         let total_lines = text.lines_len();
-        // One extra column beyond the widest line number, so right-aligned
-        // numbers keep a gap from the left edge.
-        let line_number_len = total_lines.max(1).ilog10() as usize + 2;
+        // Reserve three digits for small documents, then follow the actual
+        // line count up to seven digits.
+        let line_number_len = line_number_len(total_lines);
 
         let mut line_number_width = if state.mode.line_number() {
             let empty_line_number = window.text_system().shape_line(
@@ -2460,7 +2482,73 @@ fn frame_outline_points(corners: &[Corners<Point<Pixels>>]) -> Vec<Point<Pixels>
         points.push(point(next.0.x, current.0.y));
         points.push(point(next.0.x, next.0.y));
     }
+    if points.last() != points.first() {
+        points.push(points[0]);
+    }
     points
+}
+
+fn pad_frame_corners(
+    corners: &[Corners<Point<Pixels>>],
+    horizontal_padding: Pixels,
+) -> Vec<Corners<Point<Pixels>>> {
+    corners
+        .iter()
+        .map(|corners| Corners {
+            top_left: point(corners.top_left.x - horizontal_padding, corners.top_left.y),
+            top_right: point(
+                corners.top_right.x + horizontal_padding,
+                corners.top_right.y,
+            ),
+            bottom_left: point(
+                corners.bottom_left.x - horizontal_padding,
+                corners.bottom_left.y,
+            ),
+            bottom_right: point(
+                corners.bottom_right.x + horizontal_padding,
+                corners.bottom_right.y,
+            ),
+        })
+        .collect()
+}
+
+fn snap_frame_outline(
+    points: &[Point<Pixels>],
+    stroke_width: Pixels,
+    scale_factor: f32,
+) -> (Pixels, Vec<Point<Pixels>>) {
+    let physical_width = ((stroke_width.as_f32() * scale_factor).abs() - 0.5)
+        .ceil()
+        .max(1.);
+    let stroke_width = px(physical_width / scale_factor);
+    let center_offset = if physical_width % 2. == 0. { 0. } else { 0.5 };
+    let snap = |value: Pixels| {
+        px(
+            ((value.as_f32() * scale_factor - center_offset).round() + center_offset)
+                / scale_factor,
+        )
+    };
+    (
+        stroke_width,
+        points
+            .iter()
+            .map(|point| point.map(snap))
+            .collect::<Vec<_>>(),
+    )
+}
+
+fn clamp_frame_to_content_mask(
+    points: Vec<Point<Pixels>>,
+    stroke_width: Pixels,
+    content_mask: Bounds<Pixels>,
+) -> Vec<Point<Pixels>> {
+    let half_width = stroke_width / 2.;
+    let min_x = content_mask.left() + half_width;
+    let max_x = (content_mask.right() - half_width).max(min_x);
+    points
+        .into_iter()
+        .map(|p| point(p.x.max(min_x).min(max_x), p.y))
+        .collect()
 }
 
 impl<M: InputModeKind> Element for TextElement<M> {
@@ -2855,8 +2943,13 @@ impl<M: InputModeKind> Element for TextElement<M> {
         let hover_highlight_path = self.layout_hover_highlight(&last_layout, &mut bounds, cx);
         let document_color_paths =
             self.layout_document_colors(&document_colors, &last_layout, &bounds, cx);
-        let (range_decoration_fills, range_decoration_frames) =
-            self.layout_range_decorations(&last_layout, &bounds, cx);
+        let (range_decoration_fills, range_decoration_frames) = self.layout_range_decorations(
+            &last_layout,
+            &bounds,
+            window,
+            window.content_mask().bounds,
+            cx,
+        );
 
         let state = self.state.read(cx);
         let line_numbers = if state.mode.line_number() {
@@ -2884,8 +2977,12 @@ impl<M: InputModeKind> Element for TextElement<M> {
                 .iter()
                 .zip(last_layout.visible_buffer_lines.iter())
             {
-                let line_no: SharedString =
-                    format!("{:>width$}", buffer_line + 1, width = line_number_len).into();
+                let line_no: SharedString = format!(
+                    "{:>width$}",
+                    displayed_line_number(buffer_line + 1),
+                    width = line_number_len
+                )
+                .into();
 
                 let runs = if current_row == Some(buffer_line) {
                     &current_line_runs
@@ -3551,6 +3648,25 @@ mod tests {
         VisualTestContext, div,
     };
 
+    #[test]
+    fn line_number_column_stays_at_three_digits_then_grows_up_to_seven() {
+        assert_eq!(line_number_len(1), 3);
+        assert_eq!(line_number_len(9), 3);
+        assert_eq!(line_number_len(10), 3);
+        assert_eq!(line_number_len(999), 3);
+        assert_eq!(line_number_len(1_000), 4);
+        assert_eq!(line_number_len(999_999), 6);
+        assert_eq!(line_number_len(9_999_999), 7);
+        assert_eq!(line_number_len(10_000_000), 7);
+    }
+
+    #[test]
+    fn displayed_line_number_stays_within_seven_digits() {
+        assert_eq!(displayed_line_number(42), 42);
+        assert_eq!(displayed_line_number(9_999_999), 9_999_999);
+        assert_eq!(displayed_line_number(10_000_000), 9_999_999);
+    }
+
     struct DecorationHarness(Entity<EditorState>);
 
     impl Render for DecorationHarness {
@@ -3577,6 +3693,51 @@ mod tests {
             DecorationHarness(state)
         });
         (editor.unwrap(), window)
+    }
+
+    #[gpui::test]
+    fn editor_line_number_gutter_resizes_with_document_lines(cx: &mut TestAppContext) {
+        let (editor, window) = decoration_editor(cx, &"x\n".repeat(8), false);
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let narrow = editor
+                .read(cx)
+                .last_layout
+                .as_ref()
+                .unwrap()
+                .line_number_width;
+
+            let longer_text = "x\n".repeat(99);
+            editor.update(cx, |state, cx| {
+                state.set_value(longer_text.as_str(), window, cx)
+            });
+            window.draw(cx).clear(cx);
+            let middle = editor
+                .read(cx)
+                .last_layout
+                .as_ref()
+                .unwrap()
+                .line_number_width;
+            assert_eq!(middle, narrow, "one to three digits must share a width");
+
+            let longest_text = "x\n".repeat(999);
+            editor.update(cx, |state, cx| {
+                state.set_value(longest_text.as_str(), window, cx)
+            });
+            window.draw(cx).clear(cx);
+            let wide = editor
+                .read(cx)
+                .last_layout
+                .as_ref()
+                .unwrap()
+                .line_number_width;
+
+            assert!(
+                wide > narrow,
+                "more line-number digits must widen the gutter"
+            );
+        });
     }
 
     #[gpui::test]
@@ -3624,6 +3785,8 @@ mod tests {
             let (fills, frames) = TextElement::new(editor.clone()).layout_range_decorations(
                 layout,
                 &state.input_bounds,
+                window,
+                state.input_bounds,
                 cx,
             );
             assert_eq!(fills.len(), 1);
@@ -3724,6 +3887,8 @@ mod tests {
             let (fills, frames) = TextElement::new(editor.clone()).layout_range_decorations(
                 layout,
                 &state.input_bounds,
+                window,
+                state.input_bounds,
                 cx,
             );
             assert!(fills.is_empty());
@@ -3757,6 +3922,8 @@ mod tests {
                 let (_, frames) = TextElement::new(editor.clone()).layout_range_decorations(
                     layout,
                     &state.input_bounds,
+                    window,
+                    state.input_bounds,
                     cx,
                 );
                 assert!(frames.is_empty());
@@ -3858,6 +4025,82 @@ mod tests {
     }
 
     #[test]
+    fn frame_outline_keeps_horizontal_space_between_the_stroke_and_text() {
+        let corners = [Corners {
+            top_left: point(px(2.), px(0.)),
+            top_right: point(px(20.), px(0.)),
+            bottom_left: point(px(2.), px(10.)),
+            bottom_right: point(px(20.), px(10.)),
+        }];
+
+        assert_eq!(
+            pad_frame_corners(&corners, px(1.)),
+            vec![Corners {
+                top_left: point(px(1.), px(0.)),
+                top_right: point(px(21.), px(0.)),
+                bottom_left: point(px(1.), px(10.)),
+                bottom_right: point(px(21.), px(10.)),
+            }]
+        );
+
+        let points = frame_outline_points(&corners);
+        assert_eq!(points.first(), points.last());
+    }
+
+    #[test]
+    fn frame_outline_stroke_is_aligned_to_physical_pixels_at_each_scale_factor() {
+        let points = vec![point(px(0.2), px(1.8)), point(px(10.7), px(20.3))];
+
+        for (scale_factor, expected_width, expected_points) in [
+            (
+                1.,
+                px(1.),
+                vec![point(px(0.5), px(1.5)), point(px(10.5), px(20.5))],
+            ),
+            (
+                1.5,
+                px(2. / 3.),
+                vec![
+                    point(px(1. / 3.), px(5. / 3.)),
+                    point(px(11.), px(61. / 3.)),
+                ],
+            ),
+            (
+                2.,
+                px(1.),
+                vec![point(px(0.), px(2.)), point(px(10.5), px(20.5))],
+            ),
+        ] {
+            let (width, snapped) = snap_frame_outline(&points, px(1.), scale_factor);
+            assert_eq!(width, expected_width);
+            assert_eq!(snapped, expected_points);
+        }
+    }
+
+    #[test]
+    fn frame_outline_keeps_its_vertical_edges_inside_the_content_mask() {
+        let points = vec![
+            point(px(9.5), px(2.5)),
+            point(px(20.5), px(2.5)),
+            point(px(20.5), px(10.5)),
+            point(px(9.5), px(10.5)),
+            point(px(9.5), px(2.5)),
+        ];
+        let mask = Bounds::new(point(px(10.), px(0.)), size(px(10.), px(20.)));
+
+        assert_eq!(
+            clamp_frame_to_content_mask(points, px(1.), mask),
+            vec![
+                point(px(10.5), px(2.5)),
+                point(px(19.5), px(2.5)),
+                point(px(19.5), px(10.5)),
+                point(px(10.5), px(10.5)),
+                point(px(10.5), px(2.5)),
+            ]
+        );
+    }
+
+    #[test]
     fn test_plain_text_decorations_include_unstyled_gaps() {
         let decoration = HighlightStyle {
             background_color: Some(gpui::red()),
@@ -3938,9 +4181,9 @@ mod tests {
 
         assert_eq!(
             layout.bounds,
-            Bounds::new(point(px(47.), px(18.)), size(px(266.), px(87.)))
+            Bounds::new(point(px(51.), px(18.)), size(px(262.), px(87.)))
         );
-        assert_eq!(layout.scroll_size, size(px(976.), px(200.)));
+        assert_eq!(layout.scroll_size, size(px(972.), px(200.)));
 
         let layout_without_gutter =
             EditorScrollbarLayout::new(input_bounds, px(0.), size(px(500.), px(120.)), paddings);

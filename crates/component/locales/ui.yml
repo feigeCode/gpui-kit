@@ -121,6 +121,10 @@ DatePicker:
     zh-HK: 選擇日期
     zh-TW: 選取日期
     it: "Seleziona data"
+  time:
+    en: Time
+    zh-CN: 时间
+    zh-HK: 時間
 Select:
   placeholder:
     en: "Please select"

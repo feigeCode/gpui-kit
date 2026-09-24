@@ -1333,7 +1333,7 @@ pub(super) mod test_fonts {
         Pixels, PlatformTextSystem, RenderGlyphParams, ShapedGlyph, ShapedRun, Size,
         TextRenderingMode, point, px, size,
     };
-    use std::borrow::Cow;
+    use std::{borrow::Cow, cell::RefCell};
 
     pub(crate) const BODY: &str = "Body";
     pub(crate) const MONO: &str = "Mono";
@@ -1362,6 +1362,28 @@ pub(super) mod test_fonts {
             let font_id = if family == MONO { MONO_ID } else { BODY_ID };
             font_size * (Self::advance_units(font_id) / UNITS_PER_EM) * text.chars().count() as f32
         }
+    }
+
+    thread_local! {
+        static SHAPED_LINE_RECORDER: RefCell<Option<Vec<String>>> = const { RefCell::new(None) };
+    }
+
+    struct ShapeRecorderGuard;
+
+    impl Drop for ShapeRecorderGuard {
+        fn drop(&mut self) {
+            SHAPED_LINE_RECORDER.with(|recorder| recorder.borrow_mut().take());
+        }
+    }
+
+    /// Runs `f` while recording text submitted to [`PlatformTextSystem::layout_line`].
+    pub(crate) fn record_shaped_lines<R>(f: impl FnOnce() -> R) -> (R, Vec<String>) {
+        SHAPED_LINE_RECORDER.with(|recorder| *recorder.borrow_mut() = Some(Vec::new()));
+        let _guard = ShapeRecorderGuard;
+        let result = f();
+        let shaped_lines =
+            SHAPED_LINE_RECORDER.with(|recorder| recorder.borrow_mut().take().unwrap_or_default());
+        (result, shaped_lines)
     }
 
     impl PlatformTextSystem for WideMonoTextSystem {
@@ -1439,6 +1461,12 @@ pub(super) mod test_fonts {
         }
 
         fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
+            SHAPED_LINE_RECORDER.with(|recorder| {
+                if let Some(lines) = recorder.borrow_mut().as_mut() {
+                    lines.push(text.to_string());
+                }
+            });
+
             let mut position = px(0.);
             let mut shaped_runs = Vec::new();
             let mut run_start = 0;
@@ -1836,5 +1864,81 @@ mod retained_layout_tests {
 
         let retained = RETAINED_LAYOUTS.with(|layouts| layouts.borrow().len());
         assert_eq!(retained, 2, "one layout per paragraph state");
+    }
+
+    struct Once {
+        state: Entity<TextViewState>,
+    }
+
+    impl Render for Once {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().w(px(300.)).child(TextView::new(&self.state))
+        }
+    }
+
+    /// A paragraph with a code span is laid out by `InlineFlow`, as one
+    /// `Inline` per wrapped fragment. The fragments' states have to outlive
+    /// the frame, or every frame shapes the fragments again and leaves the
+    /// table an entry nobody will take.
+    #[gpui::test]
+    fn inline_flow_fragments_keep_their_layouts_across_frames(cx: &mut TestAppContext) {
+        cx.update(crate::init);
+        let (_, cx) = cx.add_window_view(|_, cx| Once {
+            state: cx.new(|cx| TextViewState::markdown("Call `foo` now.", cx)),
+        });
+        cx.run_until_parked();
+
+        for _ in 0..3 {
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+        }
+
+        // "Call ", "foo" and " now.": three fragments on one line.
+        let (retained, alive) = RETAINED_LAYOUTS.with(|layouts| {
+            let layouts = layouts.borrow();
+            (
+                layouts.len(),
+                layouts
+                    .values()
+                    .filter(|retained| retained.state.strong_count() > 0)
+                    .count(),
+            )
+        });
+        assert_eq!(retained, 3, "one layout per fragment");
+        assert_eq!(
+            alive, 3,
+            "every retained layout belongs to a live fragment state"
+        );
+    }
+
+    #[gpui::test]
+    fn shortening_an_inline_flow_releases_obsolete_fragment_layouts(cx: &mut TestAppContext) {
+        cx.update(crate::init);
+        let source = "word `code` ".repeat(100);
+        let (view, cx) = cx.add_window_view(|_, cx| Once {
+            state: cx.new(|cx| TextViewState::markdown(&source, cx)),
+        });
+        cx.run_until_parked();
+        for _ in 0..2 {
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+        }
+
+        view.update(cx, |view, cx| {
+            view.state.update(cx, |state, cx| {
+                state.set_text("word `code` now", cx);
+            });
+        });
+        cx.run_until_parked();
+        for _ in 0..2 {
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+        }
+
+        let alive = RETAINED_LAYOUTS.with(|layouts| {
+            layouts
+                .borrow()
+                .values()
+                .filter(|retained| retained.state.strong_count() > 0)
+                .count()
+        });
+        assert_eq!(alive, 3, "one live layout per remaining fragment");
     }
 }

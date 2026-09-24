@@ -4,29 +4,24 @@ use gpui::{
     AnyElement, App, Background, Bounds, Corners, ElementId, Hsla, IntoElement, LinearColorStop,
     Pixels, Point, SharedString, Size, TextAlign, Window, linear_gradient, point, px,
 };
-use gpui_base::motion::spring;
 use gpui_component_macros::IntoPlot;
 use num_traits::{Num, ToPrimitive};
 
 use crate::{
     ActiveTheme,
     plot::{
-        AXIS_GAP, AxisLabelSide, AxisText, Grid, Plot, PlotAxis, PlotLabel,
-        label::{TEXT_GAP, TEXT_SIZE, Text, measure_text_width},
+        AXIS_GAP, AxisLabelPlacement, AxisLabelSide, AxisText, Grid, Plot, PlotAxis, PlotLabel,
+        label::{TEXT_GAP, TEXT_HEIGHT, TEXT_SIZE, Text, measure_text_width},
         scale::{Scale, ScaleBand, ScaleLinear, Sealed},
         shape::{Bar, BarAlignment},
         tooltip::{CrossLine, PlotHover, Tooltip, TooltipState},
     },
 };
 
-use super::{build_band_labels, pointer_spring};
-
-/// Space reserved along the band axis for the value-axis tick labels, in pixels.
-///
-/// Like [`AXIS_GAP`] this is a fixed budget rather than a measured one: the band
-/// scale is also rebuilt during hit-testing, where no [`Window`] is available to
-/// shape text. Values wider than this (very large numbers) will overflow it.
-const VALUE_AXIS_GAP: f32 = 32.;
+use super::{
+    TickFormat, VALUE_AXIS_GAP, build_band_labels, caller_id, format_tick, labeled_items,
+    value_axis_gap,
+};
 
 /// How much the bars away from the hovered one fade, as a share of their opacity.
 const HOVER_DIM: f32 = 0.45;
@@ -34,7 +29,7 @@ const HOVER_DIM: f32 = 0.45;
 /// The hover a bar chart paints, sampled once per frame in [`Plot::hover`].
 #[derive(Clone, Copy)]
 struct BarHover {
-    /// Cross-axis center of the highlight band, springing between bars.
+    /// Cross-axis center of the highlight band, gliding between bars.
     center: f32,
     /// How far the hover has faded in.
     focus: f32,
@@ -56,17 +51,30 @@ where
         Option<Rc<dyn Fn(&T, RangeInclusive<f32>, &dyn Fn(f32) -> f32) -> [LinearColorStop; 2]>>,
     tick_margin: usize,
     label: Option<Rc<dyn Fn(&T) -> SharedString>>,
+    label_color: Option<Rc<dyn Fn(&T) -> Hsla>>,
     label_axis: bool,
     value_axis: bool,
+    value_axis_label_placement: AxisLabelPlacement,
     value_tick_count: usize,
+    value_tick_format: Option<TickFormat>,
+    band_count: Option<usize>,
+    band_tick_count: Option<usize>,
     grid: bool,
+    grid_dashed: bool,
     alignment: BarAlignment,
     corner_radii: Corners<Pixels>,
-    id: Option<ElementId>,
+    padding_inner: f32,
+    padding_outer: f32,
+    min_length: f32,
+    id: ElementId,
+    interactive: bool,
     name: Option<SharedString>,
     /// The label gaps of horizontal bars, measured in `prepaint` for the frame,
     /// so `tooltip_state` (which has no window) can keep the hover off the labels.
     horizontal_gaps: (f32, f32),
+    /// The value-axis gutter of vertical bars, measured in `prepaint`; see
+    /// [`value_axis_gap`].
+    value_label_gap: f32,
     hover: Option<BarHover>,
 }
 
@@ -75,6 +83,7 @@ where
     B: Eq + Hash + Into<SharedString> + 'static,
     V: Copy + PartialOrd + Num + ToPrimitive + Sealed + 'static,
 {
+    #[track_caller]
     pub fn new<I>(data: I) -> Self
     where
         I: IntoIterator<Item = T>,
@@ -87,26 +96,51 @@ where
             fill_gradient: None,
             tick_margin: 1,
             label: None,
+            label_color: None,
             label_axis: true,
             value_axis: false,
-            value_tick_count: 4,
+            value_axis_label_placement: AxisLabelPlacement::default(),
+            value_tick_count: 5,
+            value_tick_format: None,
+            band_count: None,
+            band_tick_count: None,
             grid: true,
+            grid_dashed: true,
             alignment: BarAlignment::default(),
             corner_radii: Corners::all(px(0.)),
-            id: None,
+            padding_inner: 0.4,
+            padding_outer: 0.2,
+            min_length: 0.,
+            id: caller_id(),
+            interactive: true,
             name: None,
             horizontal_gaps: (0., 0.),
+            value_label_gap: VALUE_AXIS_GAP,
             hover: None,
         }
     }
 
-    /// Enable an interactive hover tooltip (crosshair + category/value) for this chart.
+    /// Name this chart's [`ElementId`], replacing the default taken from the
+    /// construction site.
     ///
-    /// The `id` must be unique among sibling elements. Without it, the chart stays a
-    /// non-interactive plot. Works for every [`BarAlignment`] (vertical bars get a
-    /// vertical crosshair, horizontal bars a horizontal one).
+    /// Pass one where a single construction site renders several of these
+    /// charts as siblings: they share the default id, and with it one hover
+    /// state and one path cache. The id must be unique among those siblings.
     pub fn id(mut self, id: impl Into<ElementId>) -> Self {
-        self.id = Some(id.into());
+        self.id = id.into();
+        self
+    }
+
+    /// Turn this chart's interactive layer on or off. On by default.
+    ///
+    /// The layer is the hitbox under the cursor and what it drives: a crosshair
+    /// marks the hovered band, and a tooltip shows its category and value. Turn
+    /// it off for a chart that only decorates, or one an element above it wants
+    /// the cursor for: without a hitbox it neither answers the mouse nor takes
+    /// the hover from what sits over it. A chart that is off also drops its path
+    /// cache, which is keyed on the same id.
+    pub fn interactive(mut self, interactive: bool) -> Self {
+        self.interactive = interactive;
         self
     }
 
@@ -218,6 +252,19 @@ where
         self
     }
 
+    /// Color each bar's [`label`](Self::label) text, instead of the theme's
+    /// foreground for all of them.
+    ///
+    /// Takes a closure per bar, as [`fill`](Self::fill) does, so a label can
+    /// follow its bar's color.
+    pub fn label_color<H>(mut self, color: impl Fn(&T) -> H + 'static) -> Self
+    where
+        H: Into<Hsla> + 'static,
+    {
+        self.label_color = Some(Rc::new(move |t| color(t).into()));
+        self
+    }
+
     /// Show or hide the band-axis line and labels.
     ///
     /// Default is true.
@@ -228,8 +275,9 @@ where
 
     /// Show or hide the value-axis tick labels.
     ///
-    /// Enabling this reserves [`VALUE_AXIS_GAP`] along the band axis (left of
-    /// vertical bars, below horizontal ones) for the labels.
+    /// Placed [`Outside`](AxisLabelPlacement::Outside), the default, the labels
+    /// take a gutter along the band axis, left of vertical bars and below
+    /// horizontal ones.
     ///
     /// Default is false.
     pub fn value_axis(mut self, value_axis: bool) -> Self {
@@ -237,20 +285,71 @@ where
         self
     }
 
-    /// Set how many even intervals the value axis is divided into, which drives
-    /// both the grid line spacing and the value-axis tick labels.
+    /// Set how many ticks the value axis carries, evenly spaced from the
+    /// baseline to the far edge with both ends included, which drives both the
+    /// grid lines and the value-axis tick labels.
     ///
-    /// This is a count, unlike [`Self::tick_margin`], which is a stride over the
-    /// band axis categories.
+    /// Unlike [`Self::tick_margin`], a stride over the band axis categories,
+    /// this counts the ticks themselves. Values below 2 are raised to 2.
     ///
-    /// Default is 4.
-    pub fn value_tick_count(mut self, value_tick_count: usize) -> Self {
-        self.value_tick_count = value_tick_count.max(1);
+    /// Default is 5.
+    pub fn value_tick_count(mut self, count: usize) -> Self {
+        self.value_tick_count = count.max(2);
+        self
+    }
+
+    /// Set where the value-axis tick labels sit: in a gutter beside the bars,
+    /// or inside the plot beside their grid lines, which keeps the bars' room.
+    ///
+    /// Default is [`AxisLabelPlacement::Outside`].
+    pub fn value_axis_label_placement(mut self, placement: AxisLabelPlacement) -> Self {
+        self.value_axis_label_placement = placement;
+        self
+    }
+
+    /// Set the text of each value-axis tick label from the value at its tick.
+    ///
+    /// Default is whole numbers bare and the rest to one decimal.
+    pub fn value_tick_format<S>(mut self, format: impl Fn(f64) -> S + 'static) -> Self
+    where
+        S: Into<SharedString> + 'static,
+    {
+        self.value_tick_format = Some(Rc::new(move |value| format(value).into()));
+        self
+    }
+
+    /// Lay the band axis out for `count` bands instead of the data's own
+    /// length.
+    ///
+    /// The data takes the leading bands in order and the rest stay empty, so
+    /// each bar keeps its width and place as the data grows. A `count` below
+    /// the data's length has no effect.
+    pub fn band_count(mut self, count: usize) -> Self {
+        self.band_count = Some(count);
+        self
+    }
+
+    /// Label `count` of the bands, spread evenly from the first to the last,
+    /// instead of every `tick_margin`-th.
+    ///
+    /// With [`Self::band_count`] set, the labels spread over all the bands, so
+    /// they keep their places as the data grows; one that falls on an empty band
+    /// is not drawn yet.
+    pub fn band_tick_count(mut self, count: usize) -> Self {
+        self.band_tick_count = Some(count);
         self
     }
 
     pub fn grid(mut self, grid: bool) -> Self {
         self.grid = grid;
+        self
+    }
+
+    /// Draw the grid dashed or solid.
+    ///
+    /// Default is true.
+    pub fn grid_dashed(mut self, dashed: bool) -> Self {
+        self.grid_dashed = dashed;
         self
     }
 
@@ -271,6 +370,35 @@ where
         self
     }
 
+    /// Set the gap between neighbouring bars, as a share of each band.
+    ///
+    /// Default is 0.4.
+    pub fn padding_inner(mut self, padding: f32) -> Self {
+        self.padding_inner = padding;
+        self
+    }
+
+    /// Set the gap before the first bar and after the last, as a share of a band.
+    ///
+    /// Default is 0.2.
+    pub fn padding_outer(mut self, padding: f32) -> Self {
+        self.padding_outer = padding;
+        self
+    }
+
+    /// Draw every bar at least `length` pixels long, so a zero or tiny value
+    /// still shows a stub instead of disappearing into the baseline.
+    ///
+    /// The stub grows the way the bar's value would: away from the zero line,
+    /// to the negative side for a negative value and to the positive side for
+    /// zero. A bar already that long is left alone.
+    ///
+    /// Default is 0.
+    pub fn min_length(mut self, length: f32) -> Self {
+        self.min_length = length;
+        self
+    }
+
     /// The band scale (matching `paint`): spans the height for horizontal bars, the width
     /// otherwise. Shared by `tooltip_state` and `tooltip`.
     fn band_scale(&self, bounds: Bounds<Pixels>) -> Option<ScaleBand<B>> {
@@ -282,14 +410,15 @@ where
         };
         // Value-axis labels eat into the band extent at one end; `band_offset`
         // shifts the bands away from that end when it is the leading one.
-        let gap = if self.value_axis { VALUE_AXIS_GAP } else { 0. };
+        let extent = (band_extent - self.value_axis_gap()).max(0.);
         Some(
             ScaleBand::new(
                 self.data.iter().map(|v| band_fn(v)).collect(),
-                vec![0., (band_extent - gap).max(0.)],
+                vec![0., extent],
             )
-            .padding_inner(0.4)
-            .padding_outer(0.2),
+            .band_count(self.band_count.unwrap_or(0))
+            .padding_inner(self.padding_inner)
+            .padding_outer(self.padding_outer),
         )
     }
 
@@ -300,11 +429,53 @@ where
     /// those labels below the plot, past the end of the band axis, so they need no
     /// shift.
     fn band_offset(&self) -> f32 {
-        if self.value_axis && !self.alignment.is_horizontal() {
+        if self.alignment.is_horizontal() {
+            0.
+        } else {
+            self.value_axis_gap()
+        }
+    }
+
+    /// The gutter the value-axis labels take along the band axis: none unless
+    /// they are shown outside the plot.
+    fn value_axis_gap(&self) -> f32 {
+        if !self.value_axis || self.value_axis_label_placement != AxisLabelPlacement::Outside {
+            0.
+        } else if self.alignment.is_horizontal() {
+            // Below the plot, where the gap is a line of text tall.
             VALUE_AXIS_GAP
         } else {
-            0.
+            self.value_label_gap
         }
+    }
+
+    /// The bands the band axis is laid out for: the data's, or the
+    /// [`Self::band_count`] when larger.
+    fn band_slots(&self) -> usize {
+        self.band_count.unwrap_or(0).max(self.data.len())
+    }
+
+    /// The value-axis tick label text, from the domain maximum at the far end
+    /// down to the minimum at the baseline, matching the value scale.
+    fn value_tick_labels(&self) -> Vec<SharedString> {
+        let Some(value_fn) = self.value.as_ref() else {
+            return vec![];
+        };
+        // The data plus zero, as `value_scale` spans.
+        let (lo, hi) = self.data.iter().fold((0.0_f32, 0.0_f32), |(lo, hi), v| {
+            let f = value_fn(v).to_f32().unwrap_or(0.);
+            (lo.min(f), hi.max(f))
+        });
+        let steps = (self.value_tick_count - 1) as f32;
+        (0..self.value_tick_count)
+            .map(|i| {
+                let value = (hi - (hi - lo) * i as f32 / steps) as f64;
+                match self.value_tick_format.as_ref() {
+                    Some(format) => format(value),
+                    None => format_tick(value),
+                }
+            })
+            .collect()
     }
 
     /// Label gaps `(band_side, value_end_side)` reserved along the value axis for
@@ -370,7 +541,7 @@ where
         if self.alignment.is_horizontal() {
             let value_labels_top = bounds.size.height.as_f32() - VALUE_AXIS_GAP;
             (start..=start + length).contains(&position.x.as_f32())
-                && !(self.value_axis && position.y.as_f32() > value_labels_top)
+                && !(self.value_axis_gap() > 0. && position.y.as_f32() > value_labels_top)
         } else {
             (start..=start + length).contains(&position.y.as_f32())
                 && position.x.as_f32() >= self.band_offset()
@@ -394,6 +565,9 @@ where
         } else {
             (0., 0.)
         };
+        if self.value_axis && !self.alignment.is_horizontal() {
+            self.value_label_gap = value_axis_gap(self.value_tick_labels(), window);
+        }
         vec![]
     }
 
@@ -425,19 +599,26 @@ where
         // actual maximum label width instead of using a fixed constant.
         // Similarly, value labels (numbers) at the bar ends are measured so the
         // scale range is always shrunk by exactly the right amount.
+        // Vertical bars keep a line of text clear past the tallest bar when they
+        // carry value labels, so the label above it stays inside the chart.
+        let far_gap = if self.label.is_some() {
+            TEXT_HEIGHT
+        } else {
+            10.
+        };
         let (band_gap, value_end_gap) = if is_horizontal {
             self.horizontal_gaps
         } else {
-            (axis_gap, 10.)
+            (axis_gap, far_gap)
         };
         let (range, baseline) = match alignment {
             BarAlignment::Bottom => {
                 let baseline = value_dim - axis_gap;
-                (vec![baseline, 10.], baseline)
+                (vec![baseline, far_gap], baseline)
             }
             BarAlignment::Top => {
                 let baseline = axis_gap;
-                (vec![baseline, value_dim - 10.], baseline)
+                (vec![baseline, value_dim - far_gap], baseline)
             }
             BarAlignment::Left => {
                 let baseline = band_gap;
@@ -466,7 +647,7 @@ where
         // Grid lines and the zero line span their bounds edge to edge, so they are
         // painted into bounds inset by the value-axis gap. Without this they run
         // straight through the value-axis labels.
-        let value_axis_gap = if self.value_axis { VALUE_AXIS_GAP } else { 0. };
+        let value_axis_gap = self.value_axis_gap();
         let plot_bounds = if is_horizontal {
             Bounds {
                 origin: bounds.origin,
@@ -479,13 +660,6 @@ where
             }
         };
 
-        // Value domain, matching `value_scale`'s (which is the data plus zero).
-        // `far` maps to the maximum and `baseline` to the minimum.
-        let (domain_lo, domain_hi) = self.data.iter().fold((0.0_f32, 0.0_f32), |(lo, hi), v| {
-            let f = value_fn(v).to_f32().unwrap_or(0.);
-            (lo.min(f), hi.max(f))
-        });
-
         // Draw band axis (with categorical labels).
         let mut axis = PlotAxis::new().stroke(cx.theme().border);
         if self.label_axis {
@@ -497,11 +671,13 @@ where
                     // `x_label`, because a chart with negative values needs them
                     // on either side of the zero line: each label goes on the side
                     // its own bar leaves empty.
+                    let labeled =
+                        labeled_items(self.band_slots(), self.band_tick_count, self.tick_margin);
                     let labels = self
                         .data
                         .iter()
                         .enumerate()
-                        .filter(|(i, _)| (i + 1) % self.tick_margin == 0)
+                        .filter(|(i, _)| labeled[*i])
                         .filter_map(|(_, d)| {
                             let band_x = band_scale.tick(&band_fn(d))?;
                             let value = value_fn(d).to_f32().unwrap_or(0.);
@@ -529,7 +705,7 @@ where
                         band_fn.as_ref(),
                         &band_scale,
                         band_width,
-                        self.tick_margin,
+                        &labeled_items(self.band_slots(), self.band_tick_count, self.tick_margin),
                         cx.theme().muted_foreground,
                     );
                     let (side, align) = if matches!(alignment, BarAlignment::Left) {
@@ -548,20 +724,23 @@ where
 
         // Far edge of the value axis in pixel space (opposite the baseline).
         let far = match alignment {
-            BarAlignment::Bottom => 10.,
-            BarAlignment::Top => value_dim - 10.,
+            BarAlignment::Bottom => far_gap,
+            BarAlignment::Top => value_dim - far_gap,
             BarAlignment::Left => value_dim - value_end_gap,
             BarAlignment::Right => value_end_gap,
         };
 
-        let steps = self.value_tick_count;
-        let value_ticks = value_tick_positions(far, baseline, steps);
+        let value_ticks = value_tick_positions(far, baseline, self.value_tick_count);
+        let steps = value_ticks.len() - 1;
 
         // Draw grid, excluding the line at the baseline.
         if self.grid {
-            let grid = Grid::new()
-                .stroke(cx.theme().border)
-                .dash_array(&[px(4.), px(2.)]);
+            let grid = Grid::new().stroke(cx.theme().border);
+            let grid = if self.grid_dashed {
+                grid.dash_array(&[px(4.), px(2.)])
+            } else {
+                grid
+            };
             let lines = value_ticks[..steps].to_vec();
             let grid = if is_horizontal {
                 grid.x(lines)
@@ -571,28 +750,58 @@ where
             grid.paint(&plot_bounds, window);
         }
 
+        // Labels inside the plot are painted after the bars, so no bar covers them.
+        let mut inside_labels = None;
         if self.value_axis {
             // Ticks run from `far` (the domain maximum) to `baseline` (the minimum),
             // so the labels walk the domain in the same direction.
-            let labels = value_ticks.iter().enumerate().map(|(i, &tick)| {
-                let value = domain_hi - (domain_hi - domain_lo) * i as f32 / steps as f32;
-                AxisText::new(format_tick(value), px(tick), cx.theme().muted_foreground)
-            });
+            let color = cx.theme().muted_foreground;
+            let texts = self
+                .value_tick_labels()
+                .into_iter()
+                .zip(value_ticks.iter().copied());
 
-            // The labels go in the gap `band_scale` kept clear for them, right-aligned
-            // against the plot area for vertical bars and centred under it otherwise.
-            let value_axis = if is_horizontal {
-                PlotAxis::new()
-                    .x_axis(false)
-                    .x(px(total_height - VALUE_AXIS_GAP))
-                    .x_label(labels.map(|t| t.align(TextAlign::Center)))
-            } else {
-                PlotAxis::new()
-                    .y_axis(false)
-                    .y(px(VALUE_AXIS_GAP - TEXT_GAP * 2.))
-                    .y_label(labels.map(|t| t.align(TextAlign::Right)))
-            };
-            value_axis.paint(&bounds, window, cx);
+            match self.value_axis_label_placement {
+                // The labels go in the gap `band_scale` kept clear for them,
+                // right-aligned against the plot area for vertical bars and centred
+                // under it otherwise.
+                AxisLabelPlacement::Outside => {
+                    let labels = texts.map(|(text, tick)| AxisText::new(text, px(tick), color));
+                    let value_axis = if is_horizontal {
+                        PlotAxis::new()
+                            .x_axis(false)
+                            .x(px(total_height - VALUE_AXIS_GAP))
+                            .x_label(labels.map(|t| t.align(TextAlign::Center)))
+                    } else {
+                        PlotAxis::new()
+                            .y_axis(false)
+                            .y(px(value_axis_gap - TEXT_GAP * 2.))
+                            .y_label(labels.map(|t| t.align(TextAlign::Right)))
+                    };
+                    value_axis.paint(&bounds, window, cx);
+                }
+                // Over the plot beside each grid line: above it for vertical bars
+                // but for the topmost, which would leave the plot, and along the
+                // bottom edge for horizontal ones.
+                AxisLabelPlacement::Inside => {
+                    let labels = texts
+                        .map(|(text, tick)| {
+                            if is_horizontal {
+                                Text::new(text, point(tick, total_height - TEXT_HEIGHT), color)
+                                    .align(TextAlign::Center)
+                            } else {
+                                let top = if tick < TEXT_HEIGHT {
+                                    tick + TEXT_GAP
+                                } else {
+                                    tick - TEXT_HEIGHT
+                                };
+                                Text::new(text, point(TEXT_GAP, top), color)
+                            }
+                        })
+                        .collect();
+                    inside_labels = Some(PlotLabel::new(labels));
+                }
+            }
         }
 
         // Draw bars.
@@ -602,6 +811,8 @@ where
         let fill = self.fill.clone();
         let fill_gradient = self.fill_gradient.clone();
         let label_color = cx.theme().foreground;
+        let label_color_fn = self.label_color.clone();
+        let min_length = self.min_length;
 
         // Chart bounds in pixel space, with origin (0, 0) and size equal to
         // the full chart extent. Passed to user `fill` closures so they can
@@ -649,7 +860,17 @@ where
             .band_width(band_width)
             .cross(move |d| band_scale.tick(&band_fn_cloned(d)).map(|t| t + band_offset))
             .base(move |_| zero_pixel)
-            .value(move |d| value_scale.tick(&value_fn_cloned(d)))
+            .value(move |d| {
+                let value = value_fn_cloned(d);
+                let tick = value_scale.tick(&value)?;
+                Some(extend_to_min_length(
+                    tick,
+                    zero_pixel,
+                    value < V::zero(),
+                    alignment,
+                    min_length,
+                ))
+            })
             .corner_radii(self.corner_radii);
 
         bar = match (fill, fill_gradient) {
@@ -681,15 +902,20 @@ where
                 BarAlignment::Left => TextAlign::Left,
                 BarAlignment::Right => TextAlign::Right,
             };
-            bar =
-                bar.label(move |d, p| vec![Text::new(label(d), p, label_color).align(text_align)]);
+            bar = bar.label(move |d, p| {
+                let color = label_color_fn.as_ref().map_or(label_color, |f| f(d));
+                vec![Text::new(label(d), p, color).align(text_align)]
+            });
         }
 
         bar.paint(&bounds, window, cx);
+        if let Some(labels) = inside_labels {
+            labels.paint(&bounds, window, cx);
+        }
     }
 
     fn id(&self) -> Option<ElementId> {
-        self.id.clone()
+        self.interactive.then(|| self.id.clone())
     }
 
     fn tooltip_state(
@@ -742,13 +968,7 @@ where
             } else {
                 hover.state().cross_line.x
             };
-            let center = spring(
-                ("bar-chart", "band"),
-                target,
-                pointer_spring(cx).with_travel(!hover.is_entering()),
-                window,
-                cx,
-            );
+            let center = hover.glide(("bar-chart", "band"), target, window, cx);
             BarHover {
                 center: center.as_f32(),
                 focus: hover.focus(),
@@ -772,7 +992,7 @@ where
 
         // Highlight the hovered bar with a translucent band the width of the bar, instead
         // of a hairline. Confined to the plot area so it doesn't cover the axis labels,
-        // and centered where the band spring has reached rather than snapped to the bar.
+        // and centered where the band has glided to, which the other bars also fade by.
         let band_width = self.band_scale(bounds)?.band_width();
         let center = self.hover.map_or(state.cross_line, |hover| {
             if self.alignment.is_horizontal() {
@@ -794,14 +1014,35 @@ where
         };
 
         Some(
-            // Follow the cursor; the highlight band stays snapped to the bar.
+            // Follow the cursor; `hover` already glides the band.
             Tooltip::new(cursor, bounds.size)
+                .glide(false)
                 .gap(px(8.))
                 .cross_line(cross_line)
                 .title(title)
                 .row(cx.theme().chart_2, name, format!("{}", value))
                 .into_any_element(),
         )
+    }
+}
+
+/// Push a bar's value end away from `zero` until the bar is `min` pixels long,
+/// in the direction its value grows for `alignment`.
+fn extend_to_min_length(
+    tick: f32,
+    zero: f32,
+    negative: bool,
+    alignment: BarAlignment,
+    min: f32,
+) -> f32 {
+    if (tick - zero).abs() >= min {
+        return tick;
+    }
+    let grows_toward_origin = matches!(alignment, BarAlignment::Bottom | BarAlignment::Right);
+    if grows_toward_origin != negative {
+        zero - min
+    } else {
+        zero + min
     }
 }
 
@@ -854,15 +1095,6 @@ fn clip_stops_to_bar(stops: [LinearColorStop; 2]) -> [LinearColorStop; 2] {
     [new_a, new_b]
 }
 
-/// Format a tick value for display on the value axis.
-fn format_tick(v: f32) -> String {
-    if (v - v.round()).abs() < 0.001 {
-        format!("{:.0}", v)
-    } else {
-        format!("{:.1}", v)
-    }
-}
-
 /// Whether a vertical bar's category label belongs below the zero line.
 ///
 /// A bar grows away from the zero line, so its label goes on the side the bar
@@ -873,14 +1105,14 @@ fn label_below_zero_line(value: f32, alignment: BarAlignment) -> bool {
     (value < 0.) == (alignment == BarAlignment::Top)
 }
 
-/// Tick positions along the value axis, dividing it into `steps` even intervals.
+/// `count` evenly spaced tick positions along the value axis.
 ///
 /// Runs from `far` (the value domain's maximum) through `baseline` (its minimum)
-/// inclusive, so the result holds `steps + 1` positions and the last one is the
-/// baseline.
-fn value_tick_positions(far: f32, baseline: f32, steps: usize) -> Vec<f32> {
-    (0..=steps)
-        .map(|i| far + (baseline - far) * i as f32 / steps as f32)
+/// inclusive, so the last position is the baseline. `count` is at least 2.
+fn value_tick_positions(far: f32, baseline: f32, count: usize) -> Vec<f32> {
+    let steps = (count - 1) as f32;
+    (0..count)
+        .map(|i| far + (baseline - far) * i as f32 / steps)
         .collect()
 }
 
@@ -903,15 +1135,100 @@ mod tests {
 
     #[test]
     fn test_value_tick_positions() {
-        // Both ends are included, so 4 intervals means 5 positions.
+        // Both ends are included, so 5 ticks means 4 intervals.
         assert_eq!(
-            value_tick_positions(10., 110., 4),
+            value_tick_positions(10., 110., 5),
             vec![10., 35., 60., 85., 110.]
         );
 
         // Top-aligned charts have the baseline before the far edge.
-        assert_eq!(value_tick_positions(110., 10., 2), vec![110., 60., 10.]);
+        assert_eq!(value_tick_positions(110., 10., 3), vec![110., 60., 10.]);
 
-        assert_eq!(value_tick_positions(0., 50., 1), vec![0., 50.]);
+        assert_eq!(value_tick_positions(0., 50., 2), vec![0., 50.]);
+    }
+
+    #[test]
+    fn test_min_length_extends_away_from_zero() {
+        // A zero or tiny bar grows the way a positive one would.
+        assert_eq!(
+            extend_to_min_length(100., 100., false, BarAlignment::Bottom, 2.),
+            98.
+        );
+        assert_eq!(
+            extend_to_min_length(10., 10., false, BarAlignment::Top, 2.),
+            12.
+        );
+        assert_eq!(
+            extend_to_min_length(10., 10., false, BarAlignment::Left, 2.),
+            12.
+        );
+        assert_eq!(
+            extend_to_min_length(90., 90., false, BarAlignment::Right, 2.),
+            88.
+        );
+
+        // A small negative bar grows to the other side of the zero line.
+        assert_eq!(
+            extend_to_min_length(50.5, 50., true, BarAlignment::Bottom, 2.),
+            52.
+        );
+
+        // A bar already long enough is left alone.
+        assert_eq!(
+            extend_to_min_length(40., 100., false, BarAlignment::Bottom, 2.),
+            40.
+        );
+    }
+
+    #[test]
+    fn value_tick_labels_walk_the_domain_from_the_far_end() {
+        use super::BarChart;
+
+        let chart = BarChart::new([10., 20.])
+            .band(|v| format!("{v}"))
+            .value(|v| *v)
+            .value_tick_count(3);
+        assert_eq!(chart.value_tick_labels(), vec!["20", "10", "0"]);
+
+        let money = chart.value_tick_format(|v| format!("${v:.0}"));
+        assert_eq!(money.value_tick_labels(), vec!["$20", "$10", "$0"]);
+
+        // Labels spread over every band, so they stay put as the data grows.
+        assert_eq!(money.band_count(12).band_slots(), 12);
+    }
+
+    #[test]
+    fn a_band_count_keeps_each_bar_in_its_band() {
+        use gpui::{Bounds, point, px, size};
+
+        use super::BarChart;
+        use crate::plot::{AxisLabelPlacement, scale::Scale};
+
+        let bounds = Bounds::new(point(px(0.), px(0.)), size(px(40.), px(100.)));
+        let chart = |data: &[f64], count| {
+            BarChart::new(data.to_vec())
+                .band(|v| format!("{v}"))
+                .value(|v| *v)
+                .band_count(count)
+        };
+
+        // Two bars laid out for four bands take the first half of the width.
+        let wide = chart(&[1., 2.], 2).band_scale(bounds).unwrap();
+        let narrow = chart(&[1., 2.], 4).band_scale(bounds).unwrap();
+        assert_eq!(narrow.band_width() * 2., wide.band_width());
+        assert!(narrow.tick(&"2".to_string()).unwrap() < 20.);
+
+        // A bar keeps its place as the data grows into the empty bands.
+        let grown = chart(&[1., 2., 3.], 4).band_scale(bounds).unwrap();
+        assert_eq!(grown.tick(&"2".to_string()), narrow.tick(&"2".to_string()));
+        assert_eq!(grown.band_width(), narrow.band_width());
+
+        // Labels inside the plot leave the bars their full width.
+        let outside = chart(&[1., 2.], 2).value_axis(true);
+        let inside = chart(&[1., 2.], 2)
+            .value_axis(true)
+            .value_axis_label_placement(AxisLabelPlacement::Inside);
+        assert_eq!(outside.value_axis_gap(), super::VALUE_AXIS_GAP);
+        assert_eq!(inside.value_axis_gap(), 0.);
     }
 }

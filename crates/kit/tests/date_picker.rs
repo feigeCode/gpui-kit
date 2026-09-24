@@ -1,6 +1,8 @@
+mod common;
 use gpui_kit::component::{
     Disableable,
-    date_picker::{DatePicker, DatePickerState, DateRangePreset},
+    date_picker::{DatePicker, DatePickerEvent, DatePickerState, DateRangePreset, DateTime},
+    time_field::{HourCycle, TimePrecision},
 };
 use gpui_kit::test::{TestAppContextExt, TestWindowExt};
 use gpui_kit::{
@@ -28,13 +30,15 @@ impl Render for Schedule {
 async fn date_picker_opens_selects_preset_clears_and_cancels(cx: &mut TestAppContext) {
     cx.update(gpui_kit::init);
     let mut id: Option<ElementId> = None;
-    let handle = cx.open_window(size(px(640.), px(600.)), |window, cx| {
-        let date = cx.new(|cx| DatePickerState::new(window, cx));
-        id = Some(("date-picker", date.entity_id()).into());
-        Schedule {
-            date,
-            disabled: false,
-        }
+    let (handle, _) = common::open_window(cx, Some(size(px(640.), px(600.))), |window, cx| {
+        cx.new(|cx| {
+            let date = cx.new(|cx| DatePickerState::new(window, cx));
+            id = Some(("date-picker", date.entity_id()).into());
+            Schedule {
+                date,
+                disabled: false,
+            }
+        })
     });
     let id = id.unwrap();
     cx.update_window(handle.into(), |_, window, cx| {
@@ -83,13 +87,15 @@ async fn date_picker_opens_selects_preset_clears_and_cancels(cx: &mut TestAppCon
 fn disabled_date_picker_does_not_open(cx: &mut TestAppContext) {
     cx.update(gpui_kit::init);
     let mut id: Option<ElementId> = None;
-    let handle = cx.open_window(size(px(640.), px(600.)), |window, cx| {
-        let date = cx.new(|cx| DatePickerState::new(window, cx));
-        id = Some(("date-picker", date.entity_id()).into());
-        Schedule {
-            date,
-            disabled: true,
-        }
+    let (handle, _) = common::open_window(cx, Some(size(px(640.), px(600.))), |window, cx| {
+        cx.new(|cx| {
+            let date = cx.new(|cx| DatePickerState::new(window, cx));
+            id = Some(("date-picker", date.entity_id()).into());
+            Schedule {
+                date,
+                disabled: true,
+            }
+        })
     });
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
@@ -98,4 +104,193 @@ fn disabled_date_picker_does_not_open(cx: &mut TestAppContext) {
         assert!(window.try_find(("preset", 0usize)).is_none());
     })
     .unwrap();
+}
+
+struct TimedSchedule {
+    date: Entity<DatePickerState>,
+    changes: Vec<DateTime>,
+    _subscription: gpui_kit::Subscription,
+}
+impl TimedSchedule {
+    fn new(date: Entity<DatePickerState>, cx: &mut Context<Self>) -> Self {
+        let _subscription = cx.subscribe(&date, |this, _, event, _| match event {
+            DatePickerEvent::Change(value) => this.changes.push(*value),
+        });
+        Self {
+            date,
+            changes: vec![],
+            _subscription,
+        }
+    }
+}
+impl Render for TimedSchedule {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .size_full()
+            .p_4()
+            .child(DatePicker::new(&self.date).number_of_months(2))
+    }
+}
+
+fn at(value: &str) -> chrono::NaiveDateTime {
+    chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S").unwrap()
+}
+
+#[gpui_kit::test]
+fn date_time_picker_reports_each_edit_and_stays_open(cx: &mut TestAppContext) {
+    cx.update(gpui_kit::init);
+    let mut id: Option<ElementId> = None;
+    let (handle, view) = common::open_window(cx, Some(size(px(800.), px(600.))), |window, cx| {
+        cx.new(|cx| {
+            let date = cx.new(|cx| {
+                let mut state =
+                    DatePickerState::new(window, cx).time_precision(TimePrecision::Second);
+                state.set_date_time(at("2026-09-15 08:00:00"), window, cx);
+                state
+            });
+            id = Some(("date-picker", date.entity_id()).into());
+            TimedSchedule::new(date, cx)
+        })
+    });
+    let id = id.unwrap();
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(window.find(id.clone()).value(), Some("2026/09/15 08:00:00"));
+        window.click(id.clone(), cx);
+        window.click("calendar-2026-09-16-0-2", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        // Picking a date keeps the popup open so the time can be edited next.
+        assert_eq!(window.find(id.clone()).expanded(), Some(true));
+        window.within("time").click("minute", cx);
+        window.press("4", cx);
+        window.press("5", cx);
+        // The minute is complete, so the seconds segment is selected next.
+        window.press("up", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(window.find(id.clone()).value(), Some("2026/09/16 08:45:01"));
+        // Clicking the selected day again confirms it and closes the popup.
+        window.click("calendar-2026-09-16-0-2", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(window.find(id.clone()).expanded(), Some(false));
+    })
+    .unwrap();
+    view.read_with(cx, |view, _| {
+        assert_eq!(
+            view.changes,
+            [
+                "2026-09-16 08:00:00",
+                "2026-09-16 08:04:00",
+                "2026-09-16 08:45:00",
+                "2026-09-16 08:45:01",
+            ]
+            .map(|value| DateTime::Single(Some(at(value))))
+        );
+    });
+}
+
+#[gpui_kit::test]
+fn twelve_hour_picker_types_the_period(cx: &mut TestAppContext) {
+    cx.update(gpui_kit::init);
+    let mut id: Option<ElementId> = None;
+    let (handle, view) = common::open_window(cx, Some(size(px(800.), px(600.))), |window, cx| {
+        cx.new(|cx| {
+            let date = cx.new(|cx| {
+                let mut state = DatePickerState::new(window, cx)
+                    .time_precision(TimePrecision::Minute)
+                    .hour_cycle(HourCycle::H12);
+                state.set_date_time(at("2026-09-15 00:00:00"), window, cx);
+                state
+            });
+            id = Some(("date-picker", date.entity_id()).into());
+            TimedSchedule::new(date, cx)
+        })
+    });
+    let id = id.unwrap();
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        // Midnight reads as 12 AM.
+        assert_eq!(window.find(id.clone()).value(), Some("2026/09/15 12:00 AM"));
+        window.click(id.clone(), cx);
+        window.within("time").click("hour", cx);
+        for key in ["0", "9", "3", "0", "p"] {
+            window.press(key, cx);
+        }
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(window.find(id.clone()).value(), Some("2026/09/15 09:30 PM"));
+    })
+    .unwrap();
+    view.read_with(cx, |view, _| {
+        assert_eq!(
+            view.changes.last(),
+            Some(&DateTime::Single(Some(at("2026-09-15 21:30:00"))))
+        );
+    });
+}
+
+#[gpui_kit::test]
+fn range_picker_edits_dates_only(cx: &mut TestAppContext) {
+    cx.update(gpui_kit::init);
+    let mut id: Option<ElementId> = None;
+    let (handle, view) = common::open_window(cx, Some(size(px(800.), px(600.))), |window, cx| {
+        cx.new(|cx| {
+            let date = cx.new(|cx| {
+                let mut state =
+                    DatePickerState::range(window, cx).time_precision(TimePrecision::Minute);
+                state.set_date_time(
+                    (at("2026-09-15 09:00:00"), at("2026-09-15 18:00:00")),
+                    window,
+                    cx,
+                );
+                state
+            });
+            id = Some(("date-picker", date.entity_id()).into());
+            TimedSchedule::new(date, cx)
+        })
+    });
+    let id = id.unwrap();
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            window.find(id.clone()).value(),
+            Some("2026/09/15 - 2026/09/15")
+        );
+        window.click(id.clone(), cx);
+        assert!(window.try_find("time").is_none());
+        window.click("calendar-2026-09-16-0-2", cx);
+        window.click("calendar-2026-09-18-0-2", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        // A complete range closes the popup, as in any date-only picker.
+        assert_eq!(window.find(id.clone()).expanded(), Some(false));
+    })
+    .unwrap();
+    view.read_with(cx, |view, _| {
+        // The times set by the owner are kept.
+        assert_eq!(
+            view.changes,
+            [DateTime::Range(
+                Some(at("2026-09-16 09:00:00")),
+                Some(at("2026-09-18 18:00:00"))
+            )]
+        );
+    });
 }

@@ -79,6 +79,7 @@ pub(crate) struct SkinShared {
     area: WeakEntity<DockArea>,
     panel_style: Cell<PanelStyle>,
     toggle_button_visible: Cell<bool>,
+    close_button_visible: Cell<bool>,
     /// The dock whose resize handle is being dragged, if any. Only one can be.
     resizing_dock: Cell<Option<DockPlacement>>,
 }
@@ -154,6 +155,7 @@ impl DockSkin {
                 area: cx.weak_entity(),
                 panel_style: Cell::new(PanelStyle::default()),
                 toggle_button_visible: Cell::new(true),
+                close_button_visible: Cell::new(false),
                 resizing_dock: Cell::new(None),
             }),
         })
@@ -181,6 +183,13 @@ impl DockSkin {
 
     pub fn set_toggle_button_visible(&self, visible: bool, cx: &mut App) {
         self.shared.toggle_button_visible.set(visible);
+        self.shared.notify(cx);
+    }
+
+    /// Show close buttons on closable tabs. Hidden by default; a panel's
+    /// own close constraints still decide whether its button appears.
+    pub fn set_close_button_visible(&self, visible: bool, cx: &mut App) {
+        self.shared.close_button_visible.set(visible);
         self.shared.notify(cx);
     }
 }

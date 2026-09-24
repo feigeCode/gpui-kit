@@ -789,7 +789,7 @@ mod tests {
         AppContext as _, Bounds, ClickEvent, Context, Entity, InteractiveElement as _, IntoElement,
         Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Overflow, ParentElement as _, Pixels,
         Render, SharedString, StatefulInteractiveElement as _, StyleRefinement, Styled as _,
-        TestAppContext, VisualTestContext, Window, div, point, px,
+        TestAppContext, VisualTestContext, Window, div, point, px, rems,
     };
 
     struct TextViewTestRoot {
@@ -1919,6 +1919,62 @@ mod tests {
     }
 
     #[gpui::test]
+    fn heading_refinement_changes_rendered_heading_geometry(cx: &mut TestAppContext) {
+        struct HeadingStyleRoot;
+
+        impl Render for HeadingStyleRoot {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .flex()
+                    .items_start()
+                    .child(
+                        div()
+                            .debug_selector(|| "default-h1".into())
+                            .child(TextView::markdown("default-h1-view", "# Heading")),
+                    )
+                    .child(div().debug_selector(|| "custom-h1".into()).child(
+                        TextView::markdown("custom-heading-view", "# Heading").style(
+                            TextViewStyle::default().with_heading(|level| {
+                                if level == 1 {
+                                    StyleRefinement::default().pb(rems(2.))
+                                } else {
+                                    StyleRefinement::default()
+                                }
+                            }),
+                        ),
+                    ))
+                    .child(
+                        div()
+                            .debug_selector(|| "default-h2".into())
+                            .child(TextView::markdown("default-h2-view", "## Heading")),
+                    )
+                    .child(div().debug_selector(|| "custom-h2".into()).child(
+                        TextView::markdown("custom-h2-view", "## Heading").style(
+                            TextViewStyle::default().with_heading(|level| {
+                                if level == 1 {
+                                    StyleRefinement::default().pb(rems(2.))
+                                } else {
+                                    StyleRefinement::default()
+                                }
+                            }),
+                        ),
+                    ))
+            }
+        }
+
+        cx.update(crate::init);
+        let (_, cx) = cx.add_window_view(|_, _| HeadingStyleRoot);
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+
+        let default_h1 = cx.debug_bounds("default-h1").unwrap();
+        let custom_h1 = cx.debug_bounds("custom-h1").unwrap();
+        let default_h2 = cx.debug_bounds("default-h2").unwrap();
+        let custom_h2 = cx.debug_bounds("custom-h2").unwrap();
+        assert!(custom_h1.size.height > default_h1.size.height);
+        assert_eq!(custom_h2.size.height, default_h2.size.height);
+    }
+
+    #[gpui::test]
     fn max_lines_disables_links_hidden_by_the_clamp(cx: &mut TestAppContext) {
         cx.update(crate::init);
         let (_, cx) = cx.add_window_view(|_, cx| {
@@ -2105,6 +2161,78 @@ mod tests {
                 "{case}: TextView height did not reserve its painted text;                  painted_bottom={painted_bottom:?}, view={view_bounds:?}"
             );
         }
+    }
+
+    #[test]
+    fn ordered_markdown_list_start_reaches_layout_marker() {
+        use crate::text::inline::test_fonts::{WideMonoTextSystem, record_shaped_lines};
+        use gpui::TestApp;
+
+        struct MarkdownRoot {
+            text_view: Entity<TextViewState>,
+        }
+
+        impl Render for MarkdownRoot {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().w(px(400.)).child(TextView::new(&self.text_view))
+            }
+        }
+
+        #[derive(Clone, Copy)]
+        enum Format {
+            Markdown,
+            Html,
+        }
+
+        fn shaped_markers(format: Format, source: &str) -> Vec<String> {
+            let (_, shaped_lines) = record_shaped_lines(|| {
+                let mut app = TestApp::with_text_system(Arc::new(WideMonoTextSystem));
+                app.update(crate::init);
+                let mut window = app.open_window(|_, cx| MarkdownRoot {
+                    text_view: cx.new(|cx| match format {
+                        Format::Markdown => TextViewState::markdown(source, cx),
+                        Format::Html => TextViewState::html(source, cx),
+                    }),
+                });
+                window.draw();
+                app.run_until_parked();
+                window.draw();
+            });
+
+            let mut markers = shaped_lines
+                .into_iter()
+                .filter(|line| line.ends_with(". "))
+                .collect::<Vec<_>>();
+            markers.dedup();
+            markers
+        }
+
+        let starts_at_one = "1. one\n2. two";
+        assert_eq!(
+            shaped_markers(Format::Markdown, starts_at_one),
+            ["1. ", "2. "]
+        );
+        assert_eq!(
+            shaped_markers(Format::Html, "<ol><li>one</li><li>two</li></ol>"),
+            ["1. ", "2. "]
+        );
+
+        assert_eq!(
+            shaped_markers(Format::Markdown, "3. hello\n4. world"),
+            ["3. ", "4. "]
+        );
+
+        let nested_starts_at_four = "1. outer\n\n   4. nested\n   5. again";
+        assert_eq!(
+            shaped_markers(Format::Markdown, nested_starts_at_four),
+            ["1. ", "D. ", "E. "]
+        );
+
+        let nested_starts_at_zero = "1. outer\n\n   0. zero";
+        assert_eq!(
+            shaped_markers(Format::Markdown, nested_starts_at_zero),
+            ["1. ", "0. "]
+        );
     }
 
     /// The code-bearing list item takes `InlineFlow`; the plain item takes the

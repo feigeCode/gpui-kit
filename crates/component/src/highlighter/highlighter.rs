@@ -11,7 +11,6 @@ use std::time::{Duration, Instant};
 use std::{
     collections::{BTreeSet, HashMap},
     ops::{ControlFlow, Range},
-    usize,
 };
 use sum_tree::Bias;
 use tree_sitter::{

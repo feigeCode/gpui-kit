@@ -4,7 +4,6 @@ use gpui::{
     AnyElement, App, Bounds, ElementId, Hsla, IntoElement, PathBuilder, Pixels, Point,
     SharedString, Window, fill, point, px,
 };
-use gpui_base::motion::spring;
 use gpui_component_macros::IntoPlot;
 use num_traits::{Num, ToPrimitive};
 use rust_i18n::t;
@@ -14,18 +13,11 @@ use crate::{
     plot::{
         AXIS_GAP, Grid, Plot, PlotAxis, origin_point,
         scale::{Scale, ScaleBand, ScaleLinear, Sealed},
-        tooltip::{CrossLine, PlotHover, Tooltip, TooltipState},
+        tooltip::{CrossLine, Tooltip, TooltipState},
     },
 };
 
-use super::{build_band_labels, pointer_spring};
-
-/// The hover a candlestick chart paints, sampled once per frame in [`Plot::hover`].
-#[derive(Clone, Copy)]
-struct CandlestickHover {
-    /// Center of the highlight band along the x axis, springing between candles.
-    center: Pixels,
-}
+use super::{build_band_labels, caller_id, labeled_items};
 
 #[derive(IntoPlot)]
 pub struct CandlestickChart<T, X, Y>
@@ -46,8 +38,8 @@ where
     grid: bool,
     bullish: Option<Hsla>,
     bearish: Option<Hsla>,
-    id: Option<ElementId>,
-    hover: Option<CandlestickHover>,
+    id: ElementId,
+    interactive: bool,
 }
 
 impl<T, X, Y> CandlestickChart<T, X, Y>
@@ -55,6 +47,7 @@ where
     X: Eq + Hash + Into<SharedString> + 'static,
     Y: Copy + PartialOrd + Num + ToPrimitive + Sealed + 'static,
 {
+    #[track_caller]
     pub fn new<I>(data: I) -> Self
     where
         I: IntoIterator<Item = T>,
@@ -72,18 +65,32 @@ where
             grid: true,
             bullish: None,
             bearish: None,
-            id: None,
-            hover: None,
+            id: caller_id(),
+            interactive: true,
         }
     }
 
-    /// Enable an interactive hover tooltip (a highlight band and the open, high,
-    /// low and close of the hovered candle) for this chart.
+    /// Name this chart's [`ElementId`], replacing the default taken from the
+    /// construction site.
     ///
-    /// The `id` must be unique among sibling elements. Without it, the chart stays a
-    /// non-interactive plot.
+    /// Pass one where a single construction site renders several of these
+    /// charts as siblings: they share the default id, and with it one hover
+    /// state and one path cache. The id must be unique among those siblings.
     pub fn id(mut self, id: impl Into<ElementId>) -> Self {
-        self.id = Some(id.into());
+        self.id = id.into();
+        self
+    }
+
+    /// Turn this chart's interactive layer on or off. On by default.
+    ///
+    /// The layer is the hitbox under the cursor and what it drives: a highlight
+    /// band marks the hovered candle, and a tooltip shows its open, high, low and
+    /// close. Turn it off for a chart that only decorates, or one an element
+    /// above it wants the cursor for: without a hitbox it neither answers the
+    /// mouse nor takes the hover from what sits over it. A chart that is off also
+    /// drops its path cache, which is keyed on the same id.
+    pub fn interactive(mut self, interactive: bool) -> Self {
+        self.interactive = interactive;
         self
     }
 
@@ -220,7 +227,7 @@ where
                 x_fn.as_ref(),
                 &x,
                 band_width,
-                self.tick_margin,
+                &labeled_items(self.data.len(), None, self.tick_margin),
                 cx.theme().muted_foreground,
             );
             axis = axis.x(height).x_label(labels);
@@ -307,7 +314,7 @@ where
     }
 
     fn id(&self) -> Option<ElementId> {
-        self.id.clone()
+        self.interactive.then(|| self.id.clone())
     }
 
     fn tooltip_state(
@@ -335,21 +342,6 @@ where
         ))
     }
 
-    fn hover(&mut self, hover: Option<&PlotHover>, window: &mut Window, cx: &mut App) {
-        self.hover = hover.map(|hover| {
-            // The band slides to the hovered candle; on the first hovered frame it
-            // adopts the candle instead of travelling from where the last hover ended.
-            let center = spring(
-                ("candlestick-chart", "band"),
-                hover.state().cross_line.x,
-                pointer_spring(cx).with_travel(!hover.is_entering()),
-                window,
-                cx,
-            );
-            CandlestickHover { center }
-        });
-    }
-
     fn tooltip(
         &self,
         state: &TooltipState,
@@ -372,11 +364,10 @@ where
         let color = if close > open { bullish } else { bearish };
 
         // Highlight the hovered candle with a translucent band the width of its
-        // slot, centered where the band spring has reached rather than snapped to
-        // the candle, and confined to the plot area above the axis labels.
-        let center = self.hover.map_or(state.cross_line.x, |hover| hover.center);
+        // slot, which glides between candles, confined to the plot area above the
+        // axis labels.
         let band_width = self.x_scale(bounds)?.band_width();
-        let cross_line = CrossLine::new(point(center, state.cross_line.y))
+        let cross_line = CrossLine::new(state.cross_line)
             .span(0., self.plot_height(bounds))
             .band(px(band_width));
 
