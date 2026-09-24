@@ -509,3 +509,27 @@ impl RenderOnce for WindowStateLayers {
             .children(WindowState::notification_layer(&root, cx))
     }
 }
+
+/// Standalone window layers for custom root compositions.
+///
+/// Applications that build their own window surface instead of the component
+/// Root's plugin layers can mount these manually, in the same order the
+/// component Root does: sheet, dialog, notification. Each returns `None` when
+/// its layer is empty or no component window state is registered.
+pub fn render_sheet_layer(window: &mut Window, cx: &mut App) -> Option<impl IntoElement + use<>> {
+    let root = WindowState::entity(window, cx)?;
+    WindowState::sheet_layer(root, window, cx)
+}
+
+pub fn render_dialog_layer(window: &mut Window, cx: &mut App) -> Option<impl IntoElement + use<>> {
+    let root = WindowState::entity(window, cx)?;
+    WindowState::dialog_layer(&root, window, cx)
+}
+
+pub fn render_notification_layer(
+    window: &mut Window,
+    cx: &mut App,
+) -> Option<impl IntoElement + use<>> {
+    let root = WindowState::entity(window, cx)?;
+    WindowState::notification_layer(&root, cx)
+}

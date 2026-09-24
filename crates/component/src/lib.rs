@@ -9,6 +9,7 @@ mod index_path;
 #[cfg(any(feature = "inspector", debug_assertions))]
 mod inspector;
 mod root;
+pub use root::{render_dialog_layer, render_notification_layer, render_sheet_layer};
 mod sizing;
 mod styled;
 mod time;
