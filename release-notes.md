@@ -22,7 +22,115 @@ applies to every group. Use it when a single page should present its items
 directly — `GroupBoxVariant::Normal` removes the card surface the global
 default draws — while the other pages keep the global variant.
 
+#### Plot moves to `gpui-base`
+
+The chart primitives — scales, shapes, `PlotAxis`, `Grid`, `PlotLabel`,
+`PathCaches`, the `Plot` trait and hover tracking — now live in
+`gpui_base::plot`, so a design system built on `gpui-base` alone can draw charts
+without depending on `gpui-component`. `gpui_component::plot` re-exports them,
+so existing import paths such as `gpui_kit::component::plot::scale::ScaleLinear`
+keep working; the API itself is tidied for 0.7.0 (see Breaking changes).
+
+```rust
+pub struct PlotElement<P>        // gpui_base::plot: the element behind every Plot
+pub fn hover_progress(window: &mut Window, cx: &mut App) -> f32
+pub fn is_hover_entering(window: &mut Window, cx: &mut App) -> bool
+pub fn pointer_spring(cx: &App) -> Spring
+pub struct PlotMotion            // pointer spring and hover enter/exit transitions
+pub struct PlotTheme             // gpui_base::Theme::plot, carrying PlotMotion
+```
+
+A hand-written plot becomes an element with
+`impl IntoElement for MyPlot { type Element = PlotElement<Self>; … }`;
+`#[derive(IntoPlot)]` now generates exactly that. Base plot motion is
+motionless by default, and `gpui-component` projects its motion tokens onto
+`gpui_base::Theme::plot` whenever its theme is applied. The `decimal` feature
+moves to `gpui-base`; `gpui-component`'s `decimal` feature forwards to it.
+
+#### Added: chart appear motion
+
+Charts draw their data in the first time they are painted, over 1000 ms on
+`easeOutQuart`: line, area, candlestick and sankey charts reveal from the left,
+bars grow out of the zero line together, a pie sweeps clockwise
+and a radar grows out of its center. Axes, grids and labels are there from the
+first frame, the tooltip waits until the data is whole, and reduced motion
+skips it. New data paints in place, so a chart fed live quotes does not replay.
+
+```rust
+pub fn appear(self, appear: bool) -> Self       // every chart: opt out, e.g. in list rows
+pub fn appear_key(self, key: impl Hash) -> Self // every chart: replay when the key changes
+```
+
+Custom plots opt in through `gpui_base::plot`:
+
+```rust
+pub struct PlotAppear // progress(), staggered(index, count, spread), is_appearing(), complete()
+fn Plot::appear(&mut self, appear: PlotAppear, window: &mut Window, cx: &mut App)
+fn Plot::appear_generation(&self) -> Option<u64> // Some opts in; a new value replays
+fn Plot::interactive(&self) -> bool              // hover and tooltip, apart from the id
+pub fn PlotMotion::with_appear(self, appear: Transition) -> Self
+pub struct PlotAppearScope                       // remembers finished appears across remounts
+impl PlotAppearScope {
+    pub fn new(id: impl Into<ElementId>, child: impl IntoElement) -> Self
+}
+```
+
+A chart that stops being painted forgets its appear, so one in a virtual list
+draws in again whenever it scrolls back into view. Wrap the list in a
+`PlotAppearScope` and each chart inside draws in once; the memory lasts while
+the scope is painted, so closing the view or renaming the scope draws the
+charts in afresh.
+
+Every new `Plot` method has a default, so existing plots compile and behave as
+before: `Plot::interactive` is `true`, and without an `appear_generation` a plot
+tracks no appear and asks for no frames. A chart with `interactive(false)` now
+returns its id from `Plot::id`, keeping its appear and path caches but still no
+hitbox.
+
 #### Breaking changes
+
+##### Plot API
+
+Charts built from `LineChart`, `BarChart`, `AreaChart`, `PieChart`,
+`RadarChart`, `CandlestickChart` and `SankeyChart` are unaffected apart from
+the new `f32` support. Custom plots built on the primitives need these changes:
+
+- Scale ranges are two-element arrays and domains take any iterator:
+  `ScaleLinear::new(values, [height, 0.])`; the same for `ScalePoint` and
+  `ScaleBand`.
+- The value bound is the documented `PlotValue` (`f32`, `f64`, and `Decimal`
+  with `decimal`), replacing the hidden `Sealed`.
+- `Scale::least_index` is `nearest_index`; `least_index_with_domain` is removed.
+- `ScaleBand::band_width` no longer caps bands at 30px; set
+  `ScaleBand::max_band_width`, or `BarChart`/`CandlestickChart::max_band_width`
+  (30px by default, so charts look the same).
+- `PlotAxis` places its labels at paint time, so builder order no longer
+  matters. `AXIS_GAP` is `axis_gutter(font_size)`.
+- `StrokeStyle` is `Curve` and `stroke_style` is `curve`; `dot_fill_color`/
+  `dot_stroke_color` are `dot_fill`/`dot_stroke`.
+- `Arc::paint`, `paint_cached` and `contains` drop the radius overrides; build
+  another `Arc` for other radii.
+- `PlotHover::focus` and `Tooltip::focus` are `progress`.
+- `Grid::x`/`y` take any iterator of pixels; drop a `.collect()` whose type was
+  only inferred from the old `Vec` parameter.
+- `TooltipState`, `AxisText`, `label::Text`, `ArcData`, `StackPoint`,
+  `StackSeries`, `SankeyLink` and the Sankey layout records are
+  `#[non_exhaustive]`; build them with their constructors.
+- `#[derive(IntoPlot)]` generates `type Element = PlotElement<Self>` instead of
+  an `Element` impl on the plot; `gpui_base::Theme` gains a `plot` field.
+
+`StrokeStyle` and `stroke_style` are removed outright. Deprecated aliases keep
+`AXIS_GAP`, `dot_fill_color`, `dot_stroke_color` and `focus` compiling for this
+release.
+
+```diff
+- let y = ScaleLinear::new(values.collect(), vec![height, 0.]);
++ let y = ScaleLinear::new(values, [height, 0.]);
+- Line::new().stroke_style(StrokeStyle::Linear).dot()
++ Line::new().curve(Curve::Linear).dot()
+```
+
+##### Root layers
 
 The following `gpui-component` APIs have been removed:
 

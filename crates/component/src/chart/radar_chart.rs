@@ -1,5 +1,6 @@
 use std::{
     f32::consts::{PI, TAU},
+    hash::Hash,
     rc::Rc,
 };
 
@@ -8,21 +9,21 @@ use gpui::{
     Point, SharedString, TextAlign, Window, point, px,
 };
 use gpui_component_macros::IntoPlot;
-use num_traits::{Num, ToPrimitive, Zero};
+use num_traits::Zero;
 
 use crate::{
     ActiveTheme,
     plot::{
-        Plot,
+        Plot, PlotAppear,
         label::{PlotLabel, TEXT_SIZE, Text},
         polygon,
-        scale::{Scale, ScaleLinear, Sealed},
+        scale::{PlotValue, Scale, ScaleLinear},
         shape::RadialLine,
         tooltip::{Dot, Tooltip, TooltipState},
     },
 };
 
-use super::{HOVER_DOT_SIZE, HOVER_HALO_SIZE, caller_id};
+use super::{ChartAppear, HOVER_DOT_SIZE, HOVER_HALO_SIZE, TooltipContent, caller_id};
 
 const HALF_PI: f32 = PI / 2.;
 
@@ -76,13 +77,14 @@ impl From<AnyElement> for RadarLabel {
 pub struct RadarChart<T, Y>
 where
     T: 'static,
-    Y: Clone + Copy + PartialOrd + Num + ToPrimitive + Sealed + 'static,
+    Y: PlotValue,
 {
     data: Vec<T>,
     values: Vec<Rc<dyn Fn(&T) -> Y>>,
     strokes: Vec<Hsla>,
     fills: Vec<Background>,
     names: Vec<SharedString>,
+    tooltip_content: TooltipContent<T>,
     label: Option<Rc<dyn Fn(&T) -> RadarLabel + 'static>>,
     /// The text of each dimension's label, resolved once per frame in `prepaint`;
     /// element labels leave `None`. Read by `paint` (to draw them) and `tooltip`
@@ -97,11 +99,12 @@ where
     dot: bool,
     id: ElementId,
     interactive: bool,
+    appear: ChartAppear,
 }
 
 impl<T, Y> RadarChart<T, Y>
 where
-    Y: Clone + Copy + PartialOrd + Num + ToPrimitive + Sealed + 'static,
+    Y: PlotValue,
 {
     #[track_caller]
     pub fn new<I>(data: I) -> Self
@@ -114,6 +117,7 @@ where
             strokes: vec![],
             fills: vec![],
             names: vec![],
+            tooltip_content: TooltipContent::default(),
             label: None,
             label_texts: vec![],
             label_color: None,
@@ -125,6 +129,7 @@ where
             dot: false,
             id: caller_id(),
             interactive: true,
+            appear: ChartAppear::default(),
         }
     }
 
@@ -145,10 +150,29 @@ where
     /// series marks the hovered dimension, and a tooltip shows a row each. Turn
     /// it off for a chart that only decorates, or one an element above it wants
     /// the cursor for: without a hitbox it neither answers the mouse nor takes
-    /// the hover from what sits over it. A chart that is off also drops its path
-    /// cache, which is keyed on the same id.
+    /// the hover from what sits over it.
     pub fn interactive(mut self, interactive: bool) -> Self {
         self.interactive = interactive;
+        self
+    }
+
+    /// Draw the data in the first time this chart is painted. On by default.
+    ///
+    /// The theme sets how long it takes, and the system's reduced-motion
+    /// setting skips it. Turn it off for a chart that is painted again and
+    /// again as it scrolls in and out of view, such as one in each row of a
+    /// long list, where it would draw in every time.
+    pub fn appear(mut self, appear: bool) -> Self {
+        self.appear.set_enabled(appear);
+        self
+    }
+
+    /// Draw the data in again whenever `key` changes, such as the symbol or
+    /// period a chart shows.
+    ///
+    /// Without one the data draws in once, and later data paints in place.
+    pub fn appear_key(mut self, key: impl Hash) -> Self {
+        self.appear.set_key(key);
         self
     }
 
@@ -158,6 +182,54 @@ where
     /// (e.g. `.value(..).stroke(..).name("Desktop")`).
     pub fn name(mut self, name: impl Into<SharedString>) -> Self {
         self.names.push(name.into());
+        self
+    }
+
+    /// Set the hover tooltip's title for a datum, instead of its dimension label.
+    pub fn tooltip_title(mut self, title: impl Fn(&T) -> SharedString + 'static) -> Self {
+        self.tooltip_content.set_title(title);
+        self
+    }
+
+    /// Set the text of each tooltip row's value; the raw number by default.
+    ///
+    /// The closure receives the datum, the row's index (the series' index in the order `value`
+    /// added them) and the value the row reads.
+    pub fn tooltip_value(
+        mut self,
+        value: impl Fn(&T, usize, f64) -> SharedString + 'static,
+    ) -> Self {
+        self.tooltip_content.set_value(value);
+        self
+    }
+
+    /// Color each tooltip row's value, such as green or red by its sign; the
+    /// tooltip's text color by default.
+    ///
+    /// The closure receives the same arguments as
+    /// [`tooltip_value`](Self::tooltip_value).
+    pub fn tooltip_value_color<H>(mut self, color: impl Fn(&T, usize, f64) -> H + 'static) -> Self
+    where
+        H: Into<Hsla>,
+    {
+        self.tooltip_content.set_value_color(color);
+        self
+    }
+
+    /// Draw the tooltip box's content for a datum yourself, in place of the
+    /// title and rows, for a layout they cannot express such as a table.
+    ///
+    /// The dots and where the box sits stay the chart's, and
+    /// [`tooltip_title`](Self::tooltip_title), [`tooltip_value`](Self::tooltip_value)
+    /// and [`tooltip_value_color`](Self::tooltip_value_color) no longer apply.
+    pub fn tooltip_content<E>(
+        mut self,
+        content: impl Fn(&T, &mut Window, &mut App) -> E + 'static,
+    ) -> Self
+    where
+        E: IntoElement,
+    {
+        self.tooltip_content.set_content(content);
         self
     }
 
@@ -265,18 +337,26 @@ where
     ///
     /// Defaults to the theme chart colors, cycled per series.
     fn series_stroke(&self, ix: usize, cx: &App) -> Hsla {
-        let colors = [
+        self.series_stroke_from(&Self::palette(cx), ix)
+    }
+
+    /// The theme chart colors the series cycle through by default.
+    fn palette(cx: &App) -> [Hsla; 5] {
+        [
             cx.theme().chart_1,
             cx.theme().chart_2,
             cx.theme().chart_3,
             cx.theme().chart_4,
             cx.theme().chart_5,
-        ];
+        ]
+    }
 
+    /// The stroke color of the series at the given index, set or from `palette`.
+    fn series_stroke_from(&self, palette: &[Hsla; 5], ix: usize) -> Hsla {
         self.strokes
             .get(ix)
             .copied()
-            .unwrap_or(colors[ix % colors.len()])
+            .unwrap_or(palette[ix % palette.len()])
     }
 
     /// The resolved outer radius for the given bounds.
@@ -327,7 +407,7 @@ where
                 .collect()
         };
 
-        ScaleLinear::new(domain, vec![0., outer_radius])
+        ScaleLinear::new(domain, [0., outer_radius])
     }
 
     /// Map a cursor position to the nearest spoke index, or `None` when the
@@ -353,7 +433,7 @@ where
 
 impl<T, Y> Plot for RadarChart<T, Y>
 where
-    Y: Clone + Copy + PartialOrd + Num + ToPrimitive + Sealed + 'static,
+    Y: PlotValue,
 {
     /// Resolve every dimension's label, keeping the text ones for `paint` and
     /// laying out the element ones here (measuring is illegal in `paint`).
@@ -424,7 +504,7 @@ where
 
         // Draw grid rings and spokes
         if self.grid {
-            let stroke = cx.theme().border;
+            let stroke = cx.theme().chart_grid;
 
             for level in 1..=self.grid_levels {
                 let radius = outer_radius * level as f32 / self.grid_levels as f32;
@@ -452,7 +532,8 @@ where
             }
         }
 
-        // Draw series
+        // Draw series. They grow out of the center as the chart appears.
+        let appear = self.appear.get().progress();
         for (i, value_fn) in self.values.iter().enumerate() {
             let stroke = self.series_stroke(i, cx);
             let fill = self
@@ -466,13 +547,13 @@ where
             let mut line = RadialLine::new()
                 .data(&self.data)
                 .angle(move |_, i| Some(i as f32 * angle_step))
-                .radius(move |d, _| scale.tick(&value_fn(d)))
+                .radius(move |d, _| scale.tick(&value_fn(d)).map(|r| r * appear))
                 .closed()
                 .fill(fill)
                 .stroke(stroke)
                 .stroke_width(2.);
             if self.dot {
-                line = line.dot().dot_size(8.).dot_fill_color(stroke);
+                line = line.dot().dot_size(8.).dot_fill(stroke);
             }
             line.paint(&bounds, window);
         }
@@ -513,7 +594,19 @@ where
     }
 
     fn id(&self) -> Option<ElementId> {
-        self.interactive.then(|| self.id.clone())
+        Some(self.id.clone())
+    }
+
+    fn interactive(&self) -> bool {
+        self.interactive
+    }
+
+    fn appear(&mut self, appear: PlotAppear, _window: &mut Window, _cx: &mut App) {
+        self.appear.update(appear);
+    }
+
+    fn appear_generation(&self) -> Option<u64> {
+        self.appear.generation()
     }
 
     fn tooltip_state(
@@ -555,7 +648,7 @@ where
         state: &TooltipState,
         cursor: Point<Pixels>,
         bounds: Bounds<Pixels>,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement> {
         let d = self.data.get(state.index)?;
@@ -564,7 +657,7 @@ where
 
         // No crosshair: a radar has no cartesian axis to snap to; the dots mark
         // the hovered dimension's vertices instead.
-        let mut tooltip =
+        let tooltip =
             Tooltip::new(cursor, bounds.size)
                 .gap(px(8.))
                 .dots(state.dots.iter().enumerate().map(|(i, p)| {
@@ -575,17 +668,30 @@ where
                         .fill(self.series_stroke(i, cx))
                 }));
 
-        // Filled by `prepaint`, which runs first; element labels leave no title.
-        if let Some(title) = self.label_texts.get(state.index).cloned().flatten() {
-            tooltip = tooltip.title(title);
-        }
-
-        // One row per series: swatch + label + value.
-        for (i, value_fn) in self.values.iter().enumerate() {
-            let name = self.names.get(i).cloned().unwrap_or_default();
-            let value = value_fn(d).to_f64()?;
-            tooltip = tooltip.row(self.series_stroke(i, cx), name, format!("{}", value));
-        }
+        let palette = Self::palette(cx);
+        let tooltip = self.tooltip_content.apply(
+            tooltip,
+            d,
+            // Filled by `prepaint`, which runs first; element labels leave no title.
+            || self.label_texts.get(state.index).cloned().flatten(),
+            // One row per series: swatch + label + value.
+            || {
+                self.values
+                    .iter()
+                    .enumerate()
+                    .map(|(i, value_fn)| {
+                        let name = self.names.get(i).cloned().unwrap_or_default();
+                        Some((
+                            self.series_stroke_from(&palette, i),
+                            name,
+                            value_fn(d).to_f64()?,
+                        ))
+                    })
+                    .collect::<Option<Vec<_>>>()
+            },
+            window,
+            cx,
+        )?;
 
         Some(tooltip.into_any_element())
     }

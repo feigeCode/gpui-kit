@@ -30,7 +30,8 @@ export const themes = Object.entries(files)
 
 export const themeInfo = Object.fromEntries(themes.map(({ id, mode, name, source }) => [id, { mode, name, source }]));
 
-const tokens: Record<string, string> = {
+// A list names fallbacks in order, matching the component theme's fallbacks.
+const tokens: Record<string, string | string[]> = {
   background: 'background',
   foreground: 'foreground',
   card: 'background',
@@ -61,7 +62,7 @@ const tokens: Record<string, string> = {
   'brand-hover': 'primary.hover.background',
   'brand-contrast': 'primary.foreground',
   'brand-subtle': 'muted.background',
-  selection: 'list.active.background',
+  selection: ['selection.background', 'primary.background'],
   success: 'base.green',
   warning: 'base.yellow',
   destructive: 'base.red',
@@ -79,6 +80,12 @@ const tokens: Record<string, string> = {
   'code-comment': 'syntax.comment',
   'code-fn': 'syntax.function',
   'code-type': 'syntax.type',
+  'code-constant': 'syntax.constant',
+  'code-number': 'syntax.number',
+  'code-attribute': 'syntax.attribute',
+  'code-property': 'syntax.property',
+  'code-variable': 'syntax.variable.special',
+  'code-link': 'syntax.link_uri',
 };
 
 function highlightColor(highlight: Record<string, unknown> | undefined, key: string): string | undefined {
@@ -89,9 +96,10 @@ function highlightColor(highlight: Record<string, unknown> | undefined, key: str
 }
 
 export const themeCss = themes.map(({ id, colors, highlight }) => {
-  const declarations = Object.entries(tokens).flatMap(([token, source]) => {
-    const value = source.startsWith('editor.') || source.startsWith('syntax.')
-      ? highlightColor(highlight, source) : colors[source];
+  const resolve = (source: string) => source.startsWith('editor.') || source.startsWith('syntax.')
+    ? highlightColor(highlight, source) : colors[source];
+  const declarations = Object.entries(tokens).flatMap(([token, sources]) => {
+    const value = [sources].flat().map(resolve).find(Boolean);
     return value ? [`--${token}:${value};`] : [];
   });
   return `html[data-theme="${id}"]{${declarations.join('')}}`;

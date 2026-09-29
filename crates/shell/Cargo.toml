@@ -1,7 +1,7 @@
 [package]
 name = "gpui-shell"
 description = "A scriptable application runtime for GPUI, built on gpui-base."
-version = "0.6.5"
+version = "0.7.0"
 keywords = ["desktop", "gpui", "javascript", "runtime"]
 license = "Apache-2.0"
 publish = false
@@ -59,11 +59,17 @@ tungstenite = { version = "0.29", features = ["rustls-tls-webpki-roots", "url"],
 
 anyhow.workspace = true
 instant.workspace = true
+# Decode only bytes fetched through the document's network grant. Codec features
+# are shared with GPUI, whose image loader previously decoded these documents.
+image = { version = "0.25", default-features = false }
 schemars.workspace = true
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 smallvec.workspace = true
+smol.workspace = true
+# Only to find the files an SVG image references; GPUI's version, which renders it.
+usvg = { version = "0.46", default-features = false }
 tracing.workspace = true
 
 [dev-dependencies]

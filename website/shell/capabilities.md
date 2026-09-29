@@ -2,6 +2,7 @@
 title: Capabilities
 description: The default-deny model, the fs / storage / clipboard / process surface, where storage lives, and what the sandbox withholds.
 order: 8
+maturity: [preview]
 ---
 
 # Capabilities
@@ -72,7 +73,7 @@ A directory is recognized by **`gpui-shell.json`**. The manifest is inert data â
   "id": "com.example.quotes",
   "name": "Quotes",
   "version": "1.0.0",
-  "shell-version": "0.6.0",
+  "shell-version": "{{gpui_kit_version}}",
   "entry": "main.js",
   "dependencies": {
     "omarchy-ui": "huacnlee/omarchy-ui"

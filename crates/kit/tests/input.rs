@@ -1,4 +1,20 @@
 mod common;
+#[path = "input/completions.rs"]
+mod completions;
+#[path = "input/composition.rs"]
+mod composition;
+#[path = "input/constraints.rs"]
+mod constraints;
+#[path = "input/editing.rs"]
+mod editing;
+#[path = "input/editor.rs"]
+mod editor;
+#[path = "input/history.rs"]
+mod history;
+#[path = "input/lifecycle.rs"]
+mod lifecycle;
+#[path = "input/textarea.rs"]
+mod textarea;
 use gpui::{
     AppContext, Context, Entity, TestAppContext, Window, WindowHandle, div, prelude::*, px,
 };
@@ -177,6 +193,12 @@ fn scoped_keyboard_uses_the_focused_input_in_the_selected_scope(cx: &mut TestApp
         dialog.input("Ada中", cx);
         dialog.press("backspace", cx);
         assert_eq!(dialog.find("name").value(), Some("Ada"));
+        // Printable keys retain GPUI's text fallback, while named control
+        // keys use the same scoped command routing without synthetic text.
+        dialog.press("shift-a", cx);
+        assert_eq!(dialog.find("name").value(), Some("AdaA"));
+        window.press("space", cx);
+        assert_eq!(window.within("right").find("name").value(), Some("AdaA "));
         assert_eq!(window.within("left").find("name").value(), Some(""));
     })
     .unwrap();

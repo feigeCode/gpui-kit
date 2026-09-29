@@ -21,9 +21,11 @@ use crate::{
     input::Selection,
     text::TextViewMultiClickKind,
     text::node::LinkMark,
+    text::range_highlight::RevealAt,
     text::selection::word_range_at,
     text::state::LineSpan,
     text::text_view::{LinkClickHandlerFn, handle_link_click},
+    text_selection::text_rows_extent,
 };
 
 /// The style applied to one range of inline text.
@@ -206,6 +208,8 @@ pub(super) struct Inline {
     selection_source: Option<(Arc<Mutex<InlineState>>, Range<usize>)>,
     /// Range highlight backgrounds, painted behind the text.
     range_backgrounds: Vec<(Range<usize>, Hsla)>,
+    /// The start of a pending reveal, when it is in this text.
+    reveal: Option<RevealAt>,
     link_click_handler: Option<Arc<LinkClickHandlerFn>>,
     /// What this frame's layout was shaped with, to hand the shaped text to
     /// the next frame (see [`RetainedLayout`]).
@@ -220,7 +224,6 @@ pub(super) struct Inline {
 /// The inline text state, used RefCell to keep the selection state.
 #[derive(Debug, Default, PartialEq)]
 pub(crate) struct InlineState {
-    hovered_index: Option<usize>,
     /// The text that actually rendering, matched with selection.
     pub(super) text: SharedString,
     pub(super) selection: Option<Selection>,
@@ -367,6 +370,7 @@ impl Inline {
             selection_bounds: None,
             selection_source: None,
             range_backgrounds: Vec::new(),
+            reveal: None,
             link_click_handler,
             retained_key: None,
             handed_over: false,
@@ -407,6 +411,61 @@ impl Inline {
         self
     }
 
+    /// Scroll the line `reveal` starts on into view during prepaint.
+    pub(super) fn reveal(mut self, reveal: Option<RevealAt>) -> Self {
+        self.reveal = reveal;
+        self
+    }
+
+    /// Ask the enclosing list to scroll the line of the pending reveal into
+    /// view, and report where it is and whether it is inside the visible
+    /// area.
+    fn request_reveal(&self, window: &mut Window) {
+        let Some(reveal) = &self.reveal else {
+            return;
+        };
+        let text_layout = self.styled_text.layout();
+        let bounds = text_layout.bounds();
+        let line_height = text_layout.line_height();
+        let glyphs = glyph_boxes(
+            text_layout,
+            window.text_style().text_align,
+            bounds.size.width,
+        );
+        // The glyph drawing the text at the offset, or, for text with no
+        // glyph of its own such as a line break, the next glyph, or the last.
+        let offset = reveal.offset();
+        let (row, left, right) = range_boxes(&glyphs, offset..offset + 1)
+            .first()
+            .copied()
+            .or_else(|| {
+                glyphs
+                    .iter()
+                    .find(|glyph| glyph.text.start >= offset)
+                    .or(glyphs.last())
+                    .map(|glyph| (glyph.row, glyph.left, glyph.right))
+            })
+            .unwrap_or((0, Pixels::ZERO, Pixels::ZERO));
+        let line = Bounds::from_corners(
+            point(
+                bounds.left() + left,
+                bounds.top() + line_height * row as f32,
+            ),
+            point(
+                bounds.left() + right.max(left + px(1.)),
+                bounds.top() + line_height * (row + 1) as f32,
+            ),
+        );
+        window.request_autoscroll(line);
+        // A list scrolls the line to its edge, which layout may miss by a
+        // fraction of a pixel.
+        let visible = window.content_mask().bounds.dilate(px(0.5));
+        reveal.report(
+            line,
+            line.top() >= visible.top() && line.bottom() <= visible.bottom(),
+        );
+    }
+
     /// Get link at given mouse position.
     fn link_for_position(
         layout: &TextLayout,
@@ -421,6 +480,19 @@ impl Inline {
         }
 
         None
+    }
+
+    /// Get the range of the link at given mouse position.
+    fn link_range_for_position(
+        layout: &TextLayout,
+        links: &[(Range<usize>, LinkMark)],
+        position: Point<Pixels>,
+    ) -> Option<Range<usize>> {
+        let offset = layout.index_for_position(position).ok()?;
+        links
+            .iter()
+            .find(|(range, _)| range.contains(&offset))
+            .map(|(range, _)| range.clone())
     }
 
     /// Paint selected bounds for debug.
@@ -527,6 +599,30 @@ impl Inline {
         // (not scrolled) lies outside that band and is still excluded, while
         // the highlight quads painted for off-screen glyphs are clipped away by
         // GPUI's content mask as before.
+        //
+        // Each character is tested with its row's top and height, so an inline
+        // whose rows all miss the band, or all lie strictly inside it with no
+        // endpoint on any row, has the same answer for every character. Decide
+        // those without the walk below, which scans the layout twice per
+        // character: one long code block alone made every paint of a held
+        // selection cost tens of milliseconds.
+        if self.text.is_empty() {
+            return (true, true, None);
+        }
+        let (rows_top, rows_bottom) = match self.selection_bounds {
+            Some(bounds) => (bounds.top(), bounds.top() + bounds.size.height),
+            None => text_rows_extent(text_layout, line_height),
+        };
+        let band_top = selection_start.y.min(selection_end.y);
+        let band_bottom = selection_start.y.max(selection_end.y);
+        if rows_bottom <= band_top || rows_top > band_bottom {
+            return (true, true, None);
+        }
+        if band_top < rows_top && band_bottom >= rows_bottom && text_layout.len() >= self.text.len()
+        {
+            return (true, true, Some((0..self.text.len()).into()));
+        }
+
         let mut selection: Option<Selection> = None;
         let mut offset = 0;
         let mut chars = self.text.chars().peekable();
@@ -826,6 +922,8 @@ impl Element for Inline {
             }
         }
 
+        self.request_reveal(window);
+
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
         self.retain_styled_text();
         hitbox
@@ -883,8 +981,9 @@ impl Element for Inline {
         }
 
         // link cursor pointer
-        let mouse_position = window.mouse_position();
-        if let Some(_) = Self::link_for_position(&text_layout, &self.links, mouse_position) {
+        let hovered_link =
+            Self::link_range_for_position(&text_layout, &self.links, window.mouse_position());
+        if hovered_link.is_some() {
             window.set_cursor_style(CursorStyle::PointingHand, &hitbox);
         }
 
@@ -999,25 +1098,29 @@ impl Element for Inline {
             });
         }
 
-        // mouse move, update hovered link
-        window.on_mouse_event({
-            let hitbox = hitbox.clone();
-            let text_layout = text_layout.clone();
-            let mut hovered_index = state.hovered_index;
-            move |event: &MouseMoveEvent, phase, window, cx| {
-                if !phase.bubble() || !hitbox.is_hovered(window) {
-                    return;
-                }
+        // Mouse move: repaint only when the pointer enters, leaves or moves
+        // between links, so the link cursor follows it. Hovering plain text
+        // changes nothing painted.
+        if !self.links.is_empty() {
+            window.on_mouse_event({
+                let hitbox = hitbox.clone();
+                let text_layout = text_layout.clone();
+                let links = self.links.clone();
+                let mut hovered_link = hovered_link;
+                move |event: &MouseMoveEvent, phase, window, cx| {
+                    if !phase.bubble() || !hitbox.is_hovered(window) {
+                        return;
+                    }
 
-                let current = hovered_index;
-                let updated = text_layout.index_for_position(event.position).ok();
-                //  notify update when hovering over different links
-                if current != updated {
-                    hovered_index = updated;
-                    cx.notify(current_view);
+                    let updated =
+                        Self::link_range_for_position(&text_layout, &links, event.position);
+                    if hovered_link != updated {
+                        hovered_link = updated;
+                        cx.notify(current_view);
+                    }
                 }
-            }
-        });
+            });
+        }
 
         if !is_selection {
             // click to open link
@@ -1485,6 +1588,62 @@ mod range_highlight_tests {
                 .map(|(row, left, right)| (left, right, row))
                 .collect()
         })
+    }
+
+    /// The selection fast paths decide a whole inline from this extent, so it
+    /// must start exactly at the first row the per-character walk tests and
+    /// reach at least the bottom of the last one. It may reach further: a
+    /// trailing empty line, or a last row whose only character the walk
+    /// places at the end of the row before it, holds no row the walk tests.
+    #[test]
+    fn text_rows_extent_matches_the_character_walk() {
+        let mut app = TestApp::with_text_system(Arc::new(WideMonoTextSystem));
+        in_prepaint(&mut app, |window, cx| {
+            let style = TextStyle {
+                font_family: BODY.into(),
+                font_size: px(16.).into(),
+                ..Default::default()
+            };
+            let origin = point(px(7.), px(11.3));
+            for text in [
+                "one row",
+                "a long paragraph that wraps onto several rows of eight pixel glyphs",
+                "first line\nsecond line that also wraps around\n\nfourth",
+                "中文与 English 混排的一段文字也会换行",
+                "trailing newline\n",
+            ] {
+                for wrap_width in [40., 100., 1000.] {
+                    let runs = text_runs(text.len(), &style, &[]);
+                    let styled =
+                        StyledText::new(SharedString::from(text.to_string())).with_runs(runs);
+                    let layout = styled.layout().clone();
+                    let mut element = styled.into_any_element();
+                    element.layout_as_root(
+                        size(
+                            AvailableSpace::Definite(px(wrap_width)),
+                            AvailableSpace::MinContent,
+                        ),
+                        window,
+                        cx,
+                    );
+                    element.prepaint_at(origin, window, cx);
+                    // Taller than the layout's rows, as a window line height
+                    // may be.
+                    let line_height = layout.line_height() + px(3.);
+                    let rows_y = text
+                        .char_indices()
+                        .filter_map(|(offset, _)| layout.position_for_index(offset))
+                        .map(|position| position.y);
+                    let top = rows_y.clone().fold(Pixels::MAX, Pixels::min);
+                    let bottom = rows_y.fold(Pixels::MIN, Pixels::max) + line_height;
+
+                    let (rows_top, rows_bottom) = text_rows_extent(&layout, line_height);
+                    let context = format!("{text:?} at {wrap_width}px");
+                    assert_eq!(rows_top, top, "top of {context}");
+                    assert!(rows_bottom >= bottom, "bottom of {context}");
+                }
+            }
+        });
     }
 
     #[test]

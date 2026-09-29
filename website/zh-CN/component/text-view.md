@@ -7,9 +7,9 @@ description: 渲染 Markdown 与 HTML 文本，并支持自定义 Markdown 插�
 
 `TextView` 用于在 GPUI 中渲染格式化文本。它支持 Markdown、简单 HTML、文本选择、代码块操作，以及通过 Markdown 插件解析和渲染项目自定义语法。
 
-标准实现现在位于 `gpui-base`；本模块保留兼容重导出和组件主题适配。仅使用 Base 时的设置、完整默认样式及可选语法高亮请参阅 [GPUI Base TextView](/zh-CN/base/text-view)。
+标准实现现在位于 `gpui-base`；本模块保留兼容重导出和组件主题适配。仅使用 Base 时的设置、完整默认样式及可选语法高亮请参阅 [GPUI Base TextView](../base/text-view.md)。
 
-`TextView::selectable(true)` 使用 `gpui-base` 提供的窗口级文本选择引擎。如果要让普通文本或自定义 renderer 参与同一选择，请参阅 [GPUI Base Text Selection](/base/text-selection)（英文）。
+`TextView::selectable(true)` 使用 `gpui-base` 提供的窗口级文本选择引擎。如果要让普通文本或自定义 renderer 参与同一选择，请参阅 [GPUI Base Text Selection](../base/text-selection.md)。
 
 ## 导入
 
@@ -56,7 +56,7 @@ TextView::new(&self.reply).stream_fade(true)
 
 淡入以渲染后的文字为准：`push_str`，或者 `set_text` 传入以当前文本为前缀的更长文本，新增的部分从透明渐变到正常颜色，用时 350ms、ease-out 曲线，这是从 Claude 实测得到的节奏：比模型每块 50–300ms 的到达间隔更长，于是相邻几块的淡入互相重叠，尾部呈现为一段渐变，而不是最新一块突然变实。代码块里的代码和表格单元格里的文字同样参与。流式过程中被补齐的 Markdown 标记（`**bo` 变成粗体 `bold`）只让发生变化的字形重新淡入，不会整段闪烁。替换当前内容的文本直接显示；系统开启减少动态效果时也直接显示。不开启就没有任何动画。
 
-需要自定义时长、缓动，或者让每块按词逐个浮现时，通过 `.motion(...)` 传入 `TextViewMotion`，详见 [GPUI Base TextView](/zh-CN/base/text-view#保留状态与动态更新)。
+需要自定义时长、缓动，或者让每块按词逐个浮现时，通过 `.motion(...)` 传入 `TextViewMotion`，详见 [GPUI Base TextView](../base/text-view.md#保留状态与动态更新)。
 
 ### 高亮文本范围
 
@@ -97,11 +97,39 @@ fn highlight_matches(
 
 内容变化时，高亮会跟随它所在的块，保留到这个块里文字开始变化的位置为止。流式追加的文字（无论通过 `push_str` 还是 `set_text`）不影响前面的高亮；修改某处时，修改前后的高亮都会保留。表格单元格只按位置区分，因此修改表格内部时，被修改的那一行及其后各行单元格的高亮都会失效。视图会发出通知：观察这个 state，重新在新的 `rendered_text()` 里搜索即可。请在同一次 state 更新中计算范围并调用 `set_range_highlights`，确保范围对应当前文本。属于文字本身的背景（例如 `<mark>` 和语法高亮）会覆盖在范围高亮之上（行内代码的背景在高亮之下），高亮也不会随流式文字一起淡入。HTML 视图不支持范围高亮。
 
+### 滚动到范围
+
+`reveal_range` 滚动到同一份文本里的某个范围，比如用户跳到下一个结果时的当前结果：
+
+```rust
+state.reveal_range(current_range, cx)?;
+```
+
+它把范围起点所在的那一行滚动到可见区域内，长段落中间的某一行也能定位到；这一行（或整块显示的块）已经可见时，视图保持不动。空范围会显示它所在位置的那一行。`scrollable` 视图自己滚动。按内容高度排版的视图会让最近的外层 `gpui::list` 滚动，聊天记录就是这种情况，前提是承载视图的那一行已经完成布局，这一行可能不在屏幕上时，先滚动到这一行。其他滚动容器（例如设置了 `overflow_y_scroll` 的 `div`）通过 `on_reveal` 滚动，回调会收到这一行在窗口坐标中的位置：
+
+```rust
+let scroll = scroll_handle.clone();
+TextView::new(&state).on_reveal(move |line, _, _| {
+    let viewport = scroll.bounds();
+    let mut offset = scroll.offset();
+    if line.bottom() > viewport.bottom() {
+        offset.y -= line.bottom() - viewport.bottom();
+    } else if line.top() < viewport.top() {
+        offset.y += viewport.top() - line.top();
+    }
+    scroll.set_offset(offset);
+})
+```
+
+不覆盖任何块文字的范围（例如自定义块里的文字）会把整个块滚动到可滚动视图的可见区域内。只执行最后一次请求。它像高亮一样跟随内容变化；如果它所在的文字发生变化、视图用 `max_lines` 限制了行数，或者一秒内无法显示，请求就会被取消，因此不会在很久之后才突然滚动。表格里横向滚出的文字不会被滚动出来；整块显示且比视图更高的块从下方滚入时，显示的是它的末尾；放在应用列表里的可滚动视图只滚动自身；共用同一个 state 的多个视图共用同一个请求。
+
+滚动请求只是尽力而为：返回 `Ok(())` 表示范围对当前文本有效、请求已被接受，并不表示视图已经滚动；请求被取消时也不会另行通知。
+
 ## 触摸选择
 
 在触摸屏上，长按会选中手指下的单词，手指按住不放时选区跟随手指移动。抬起手指后，选区上方会出现包含 `复制` 和 `全选` 的编辑菜单，并在选区两端各显示一个拖动 handle。拖动 handle 会移动对应的一端，另一端保持不动；`全选` 选中被按下的那个视图，其 handle 仍可继续调整结果。
 
-handle 和菜单由 [`Root`](/zh-CN/component/root) 为整个窗口选区绘制，因此跨多个视图的选区也能覆盖到。点击其他位置会清除它们；手指滚动内容时菜单会暂时让开。
+handle 和菜单由 [`Root`](./root.md) 为整个窗口选区绘制，因此跨多个视图的选区也能覆盖到。点击其他位置会清除它们；手指滚动内容时菜单会暂时让开。
 
 ## 图片
 

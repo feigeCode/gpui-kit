@@ -98,11 +98,23 @@ For Windows, you can run the following command in PowerShell:
 
 ### Accessibility-driven UI testing
 
-Use accessibility-driven interaction as the default manual UI testing method
-for focus, keyboard, selection, menu, and input behavior. See
+When manual verification is needed for focus, keyboard, selection, menu, or
+input behavior, use accessibility-driven interaction by default. See
 [Accessibility-driven UI testing](docs/ACCESSIBILITY-UI-TESTING.md) for the
 required Story app launch method, accessibility-tree workflow, and completion
 evidence.
+
+### Reviewing UI changes
+
+When reviewing a UI or interaction change, check whether the UI tests exercise
+the behavior claimed by the pull request, including its relevant states and
+edge cases. If coverage is missing, describe the specific gap. Ask for a
+focused manual check only when automated UI tests cannot exercise that scenario;
+name the scenario and platform or integration to check. Do not request manual
+checks for behavior already covered by automated UI tests. Examples that may
+need platform verification include native input methods, operating-system
+accessibility actions, system clipboard integration, and platform-specific
+rendering.
 
 ### Run story
 

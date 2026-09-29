@@ -1,7 +1,7 @@
 ---
 title: Testing
 description: Test GPUI Kit applications and GPUI behavior with Rust unit tests, TestAppContext, native UI interactions, layout assertions and CI.
-order: -11
+order: -3.39
 example: false
 ---
 
@@ -10,8 +10,8 @@ example: false
 This guide covers testing GPUI Kit applications and GPUI behavior. Choose the test level from the behavior you need to verify:
 
 - Use ordinary Rust `#[test]` for pure data transformations, validation and state transitions.
-- Use `#[gpui_kit::test]` and `TestAppContext` for entities, actions, subscriptions and async tasks, creating a window when needed.
-- For UI integration tests, render the production application view, dispatch events through `gpui_kit::test`, and check control state, layout and the application result.
+- Use `#[gpui_kit::test]` and `TestAppContext` for [entities](./entity), [actions](./action), [subscriptions](./event) and async [tasks](./task), creating a window when needed.
+- For UI integration tests, render the production application view, dispatch [events](./event) through `gpui_kit::test`, and check control state, layout and the application result.
 - Use the separate offscreen renderer for pixel checks, and retain native-window and platform integration tests for those behaviors.
 
 GPUI Kit exposes its types and `#[gpui_kit::test]` through the Kit root; applications do not need an additional GPUI dependency. In test modules, import the types you use explicitly: `use gpui_kit::*;` also imports the GPUI `test` macro and can shadow Rust’s ordinary `#[test]`. The complete example below uses explicit imports.
@@ -34,7 +34,7 @@ use gpui_kit::test::TestWindowExt;
 
 Use these tests when a behavior depends on components working together, such as
 entering a value, saving a dialog and checking the result in the parent view.
-Find controls by `ElementId`, dispatch real GPUI events and assert the outcome
+Find controls by [`ElementId`](./element_id), dispatch real GPUI events and assert the outcome
 with ordinary Rust assertions.
 
 This guide covers in-process behavior and layout automation. Element snapshots do not inspect pixels or launch your packaged application.
@@ -58,6 +58,7 @@ workspace/
   ui-tests/
     Cargo.toml
     tests/ui.rs
+    tests/common/mod.rs
 ```
 
 Put the following in `ui-tests/Cargo.toml`:
@@ -81,30 +82,38 @@ uses the component crate directly can enable `gpui-component/test-support`.
 
 ## A complete test
 
-Copy the following into `tests/ui.rs`. The example uses GPUI Kit's facade,
-initializes the component library and wraps the view in `Root`. It retains the
-input state on the view, as a real application should.
+The source below is the repository's compiled `tests/ui.rs`. It initializes
+the component library and retains the input state on the view, as a real
+application should. Its `mod common;` line loads the companion
+`tests/common/mod.rs` fixture. That fixture calls the public
+`gpui_kit::open_window` with explicit 640 × 480 bounds, wraps the view in
+`gpui_kit::base::Root`, and returns both the window handle and the view entity.
+It is test setup, not an additional library dependency.
 
 The test enters a Unicode name, edits it with Backspace, clicks Save, checks
-the accessible status announcement and layout, and verifies the saved application value. The same
-source is compiled and run in GPUI Kit's integration suite.
+the status node's AccessKit role and label plus layout, and verifies the saved
+application value. The same source is compiled and run in GPUI Kit's
+integration suite. These assertions do not verify what a screen reader actually
+announces; check that in the running app on each target platform.
 
 <<< ../../crates/kit/tests/ui.rs{rust}
 
-In your own application, import the production view and its constructor from
-your library crate. Keeping a second implementation of the view in the test
-would allow the test and application to diverge. This example defines its view
-inline only so the entire test can be copied into a new package.
-
-From `ui-tests/`, run:
+For the standalone layout above, copy **both** files from the Kit checkout;
+`ui.rs` alone will fail at `mod common;`. From `ui-tests/`, run:
 
 ```sh
+mkdir -p tests/common
+cp ../gpui-kit/crates/kit/tests/ui.rs tests/ui.rs
+cp ../gpui-kit/crates/kit/tests/common/mod.rs tests/common/mod.rs
 cargo generate-lockfile
 cargo test --test ui --locked
 ```
 
-Commit `Cargo.lock` with the test project. Inside the GPUI Kit checkout, run
-this exact example with:
+Commit `Cargo.lock` with the test project. In your application, import its
+production view and constructor instead of copying the example's `Profile`;
+keep the same window setup and interaction pattern. A separate test view can
+drift from the application. Inside the GPUI Kit checkout, run this exact test
+with:
 
 ```sh
 cargo test -p gpui-kit --features test-support --test ui --locked
@@ -224,7 +233,7 @@ Import `gpui_kit::test::TestWindowExt` for the following methods:
 | `window.scroll(id, delta, cx)` | Native wheel event; `ScrollDelta` retains GPUI units and sign. |
 | `window.drag_to(from_id, to_id, cx)` | Resolve both targets and drag between their centers using native hit testing. |
 | `window.drag(from, to, cx)` | Left-button drag between window-local points, through GPUI drag creation and drop hit testing. |
-| `window.press("backspace", cx)` | Named key or shortcut using GPUI's keystroke parser. |
+| `window.press("backspace", cx)` | Native key-down/key-up for a named key or shortcut using GPUI's keystroke parser. |
 | `window.input(text, cx)` | Per-character text input to the current focus; does not focus or replace the whole value. |
 
 Scoped queries support `find`, `try_find`, nested `within`, `click`, `click_at`,
@@ -270,7 +279,8 @@ Assert native properties and application results together. Checking saved model
 state or an emitted result is a useful part of an integration test; it should
 not replace verifying the relevant visible control state.
 
-Text input does not model complete OS IME composition. Masked inputs report
+Command presses, including Enter, must not inject newline text through an IME
+callback. Text input does not model complete OS IME composition. Masked inputs report
 no value; verify sensitive results through application state.
 
 ## Complete the frame before querying
@@ -332,6 +342,8 @@ that every option or combination of every component has been exhaustively tested
 | Suite | Behavior exercised |
 | --- | --- |
 | `test_macro.rs` | Published `#[gpui_kit::test]` sync/async compatibility alongside ordinary Rust tests; the independent Kit-only recipes package runs the same contract |
+| `input.rs` and `input/` | Input, Textarea and Editor editing, clipboard, selection, history, read-only transitions, Unicode, multiline viewport behavior, search/replace, completion acceptance and retained state across renders |
+| `input_focus.rs` | Repeated Tab/Shift-Tab traversal with passive addons, addon button focus and activation, and Textarea/Editor body-click focus followed by editing |
 | `search.rs` | Command disabled-item skipping, wraparound, Unicode keywords, empty results, Action dispatch and original-index callbacks, two-stage Escape; Combobox search, single/multi selection, clearing, empty-result recovery, disabled behavior and exactly one Confirm on close |
 | `disclosure.rs` | Accordion exclusive expansion/collapse and actual panel geometry; Stepper content navigation; disabled disclosure/steps; Slider track click, thumb drag and disabled behavior |
 | `collections.rs` | Tree pointer expansion, keyboard collapse/expansion and selection; DataTable row selection, keyboard virtualization and wheel scrolling |
@@ -344,6 +356,33 @@ The existing form, Select, HoverCard, virtual-list, pointer, lifecycle and isola
 suites remain in place. Pure presentation components need geometry or pixel assertions,
 not invented interaction state. Custom parts register their existing native elements;
 unsupported properties remain unavailable, with no manual test-only override.
+
+The [Input regression example](https://github.com/longbridge/gpui-kit/tree/main/crates/kit/tests/input)
+shows how to turn a manual editing sequence into a repeatable UI test. From the
+repository root, run both editing and focus targets, or select one workflow:
+
+```sh
+script/test-input # Complete Input gate: Base, Component and Kit workflows (Bash).
+cargo test -p gpui-kit --features test-support --test input --test input_focus --locked
+cargo test -p gpui-kit --features test-support --test input --locked -- history::paste_is_atomic_and_separate_from_surrounding_typing --exact
+cargo test -p gpui-kit --features test-support --test input_focus --locked -- reverse_tab_cycles_three_inputs_with_passive_addons --exact
+```
+
+Append `-- --list` to the combined command to list cases without executing them.
+These commands are reproduction instructions, not recorded passing results. Report
+the revision, platform, command and observed result for each run.
+
+Example workflows include typing → paste → typing → Undo/Redo, Textarea Enter
+submission versus Shift-Enter insertion, and Editor completion → acceptance → Undo.
+Each checks fresh snapshots plus public state or owner events where needed.
+Completion responses come from a deterministic provider, not a live language server.
+The suite also exercises the public IME handler protocol (preedit, UTF-16 ranges,
+commit/cancel and history), multi-cursor editing, folding, provider cancellation
+and failure. Its operation matrix is the review checklist for ordinary input
+changes; add a regression for the changed interaction and require platform CI.
+The separate `input_focus` target exercises focus callbacks after window updates.
+These cases do not establish full OS IME, accessibility action, system clipboard
+or pixel correctness; use the corresponding platform checks for those boundaries.
 
 Views that open dialogs, sheets or notifications through `WindowExt` need a `Root`
 as the window's root view. `Root` always renders all three overlay layers above
@@ -369,6 +408,15 @@ No GPUI fork or Cargo patch is used to bypass these limitations.
 
 On failure, check the reported paths, observation, completed frame, keyboard
 focus, clipping/overlays and asynchronous completion, in that order as relevant.
+
+| Symptom | First check |
+| --- | --- |
+| `mod common` cannot be found | Copy `tests/common/mod.rs` beside the included `tests/ui.rs`, or replace the fixture call with your application's window setup. |
+| `find` lists no matching path | Confirm `test-support`, the control's ID or `.test_support()`, and an initial `render_frame`. |
+| A query is ambiguous | Resolve an existing parent with `within`, then query its child ID. |
+| `focused()` reports a missed binding, or scoped `input` panics | Observe the element before `.track_focus(&handle)` and click the intended input before typing. |
+| An assertion still sees the old state | Query a fresh snapshot after a completed frame; for queued work, leave `update_window` and use `wait_for`. |
+| A visible target does not receive the click | Inspect clipping and overlay order; pointer helpers use native hit testing. |
 
 ## Verify rendering independently
 

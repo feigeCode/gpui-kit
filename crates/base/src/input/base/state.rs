@@ -26,7 +26,7 @@ use super::{
     blink_cursor::BlinkCursor,
     change::Change,
     cursor::{CursorSelection, Selections},
-    element::{EditorScrollbar, EditorScrollbarSnapshot, TextElement},
+    element::{EditorScrollbar, EditorScrollbarSnapshot, LongestLineKey, TextElement},
     kind::InputModeKind,
     mask_pattern::normalize_number_input,
     mode::LayoutMode,
@@ -356,6 +356,15 @@ impl ColumnarPoint {
     }
 }
 
+/// The document and selections a paste was asked to replace, taken when the
+/// `Paste` action ran so a clipboard read that resolves later can tell
+/// whether it still applies. See [`InputBaseState::paste_target`].
+#[derive(Debug, PartialEq)]
+struct PasteTarget {
+    document_revision: u64,
+    selections: Vec<CursorSelection>,
+}
+
 /// The shared text-editing engine behind [`crate::input::InputState`],
 /// [`crate::input::TextareaState`] and [`crate::input::EditorState`].
 ///
@@ -440,6 +449,8 @@ pub struct InputBaseState<M: InputModeKind> {
     /// The size of the scrollable content.
     pub(crate) scroll_size: gpui::Size<Pixels>,
     pub(super) editor_scrollbar_snapshot: Cell<Option<EditorScrollbarSnapshot>>,
+    /// The unwrapped width of the longest line and what it was measured for.
+    pub(super) longest_line_width: Cell<Option<(LongestLineKey, Pixels)>>,
     pub(super) editor_paddings: Edges<Pixels>,
     /// The style this state paints with: what was projected onto it, with
     /// every colour left unset resolved from the palette that is current. It
@@ -770,6 +781,7 @@ impl<M: InputModeKind> InputBaseState<M> {
             scroll_handle: ScrollHandle::new(),
             scroll_size: gpui::size(px(0.), px(0.)),
             editor_scrollbar_snapshot: Cell::new(None),
+            longest_line_width: Cell::new(None),
             editor_paddings: Edges::default(),
             deferred_scroll_offset: None,
             placeholder: SharedString::default(),
@@ -794,8 +806,10 @@ impl<M: InputModeKind> InputBaseState<M> {
 
     /// Sets whether the context menu that shows on right-click is enabled.
     ///
-    /// The context menu is enabled by default.
-    /// This value is ignored if a custom context menu builder is defined on the input.
+    /// The context menu is enabled by default. Disabling it turns off the
+    /// right-click menu entirely, including a custom menu set on the element.
+    /// A custom menu already replaces the built-in one, so keep this enabled
+    /// to show only your own items.
     pub fn context_menu(mut self, enable: bool) -> Self {
         self.enable_context_menu = enable;
         self
@@ -1112,6 +1126,10 @@ impl<M: InputModeKind> InputBaseState<M> {
         }
 
         self.disabled = disabled;
+        if disabled {
+            M::hide_context_menu(self, cx);
+            M::clear_inline_completion(self, cx);
+        }
         cx.notify();
     }
 
@@ -1135,6 +1153,8 @@ impl<M: InputModeKind> InputBaseState<M> {
 
         self.readonly = readonly;
         if readonly {
+            M::hide_context_menu(self, cx);
+            M::clear_inline_completion(self, cx);
             self.search_session.replace_mode = false;
         }
         cx.notify();
@@ -1356,14 +1376,16 @@ impl<M: InputModeKind> InputBaseState<M> {
         if self.is_single_line() {
             return;
         }
-        self.undo_manager.break_transaction_coalescing();
-        self.select_all_cursors_to(
+        self.select_all_cursors_to_with_affinity(
             |s, sel| {
-                let offset = s
-                    .start_of_line_at(sel.cursor_offset(), s.line_end_affinity_for(sel))
-                    .saturating_sub(1);
-                s.previous_boundary(offset)
+                s.vertical_selection_target(
+                    sel.cursor_offset(),
+                    sel.column_anchor,
+                    s.line_end_affinity_for(sel),
+                    -1,
+                )
             },
+            true,
             cx,
         );
     }
@@ -1372,15 +1394,16 @@ impl<M: InputModeKind> InputBaseState<M> {
         if self.is_single_line() {
             return;
         }
-        self.undo_manager.break_transaction_coalescing();
-        let len = self.text.len();
-        self.select_all_cursors_to(
+        self.select_all_cursors_to_with_affinity(
             |s, sel| {
-                let offset = (s.end_of_line_at(sel.cursor_offset(), s.line_end_affinity_for(sel))
-                    + 1)
-                .min(len);
-                s.next_boundary(offset)
+                s.vertical_selection_target(
+                    sel.cursor_offset(),
+                    sel.column_anchor,
+                    s.line_end_affinity_for(sel),
+                    1,
+                )
             },
+            true,
             cx,
         );
     }
@@ -1435,12 +1458,16 @@ impl<M: InputModeKind> InputBaseState<M> {
         cx: &mut Context<Self>,
     ) {
         self.undo_manager.break_transaction_coalescing();
-        self.select_all_cursors_to(
-            |s, sel| s.end_of_line_at(sel.cursor_offset(), s.line_end_affinity_for(sel)),
+        self.select_all_cursors_to_with_affinity(
+            |s, sel| {
+                (
+                    s.end_of_line_at(sel.cursor_offset(), s.line_end_affinity_for(sel)),
+                    true,
+                )
+            },
+            false,
             cx,
         );
-        // Mirrors MoveEnd: the caret belongs at the end of the visual row it is on.
-        self.cursor_line_end_affinity = true;
     }
 
     pub(super) fn select_to_previous_word(
@@ -2080,6 +2107,9 @@ impl<M: InputModeKind> InputBaseState<M> {
             return;
         }
 
+        // Escape also dismisses a request whose popup has not arrived yet.
+        M::hide_context_menu(self, cx);
+
         // Collapse extra cursors back to the active one first.
         if !self.selections.is_single() {
             self.undo_manager.break_transaction_coalescing();
@@ -2093,6 +2123,7 @@ impl<M: InputModeKind> InputBaseState<M> {
             M::clear_inline_completion(self, cx);
             return; // Consume the escape, don't propagate
         }
+        M::clear_inline_completion(self, cx);
 
         // The handles and the edit menu are the topmost surface to dismiss.
         if self.touch_selection().is_some() {
@@ -2228,8 +2259,9 @@ impl<M: InputModeKind> InputBaseState<M> {
 
         self.undo_manager.break_transaction_coalescing();
         let id = self.selections.generate_id();
-        self.selections
-            .add(CursorSelection::new(id, offset, offset));
+        let mut selection = CursorSelection::new(id, offset, offset);
+        selection.column_anchor = self.preferred_column_for(offset);
+        self.selections.add(selection);
         cx.notify();
     }
 
@@ -2432,15 +2464,25 @@ impl<M: InputModeKind> InputBaseState<M> {
         M::on_mouse_move(self, offset, event, window, cx);
 
         if self.is_code_editor() {
-            if let Some(diagnostic) = self
+            // Keep the current popover while the pointer stays on the same
+            // diagnostic, so moving over a squiggle neither repaints nor
+            // rebuilds the popover.
+            match self
                 .mode
                 .diagnostics()
                 .and_then(|set| set.for_offset(offset))
             {
-                self.diagnostic_popover = Some(Rc::new(diagnostic.clone()));
-                cx.notify();
-            } else {
-                self.diagnostic_popover = None;
+                Some(diagnostic) => {
+                    if self.diagnostic_popover.as_deref() != Some(diagnostic) {
+                        self.diagnostic_popover = Some(Rc::new(diagnostic.clone()));
+                        cx.notify();
+                    }
+                }
+                None => {
+                    if self.diagnostic_popover.take().is_some() {
+                        cx.notify();
+                    }
+                }
             }
         }
     }
@@ -2668,10 +2710,64 @@ impl<M: InputModeKind> InputBaseState<M> {
         if !self.is_editable() {
             return;
         }
-        let Some(clipboard) = cx.read_from_clipboard() else {
+        if let Some(clipboard) = cx.read_from_clipboard() {
+            self.insert_clipboard(clipboard, window, cx);
+            return;
+        }
+        // The synchronous read is empty on platforms whose clipboard is
+        // asynchronous and permission-gated (the web), so fall back to the
+        // real read. It has to start here, still inside the user activation
+        // that dispatched `Paste`, or the browser refuses the read.
+        let read = cx.read_from_clipboard_async();
+        let target = self.paste_target();
+        cx.spawn_in(window, async move |this, cx| match read.await {
+            Ok(Some(clipboard)) => {
+                this.update_in(cx, |this, window, cx| {
+                    // The read can sit behind a permission prompt for as
+                    // long as the user likes. If they edited, moved the
+                    // caret or left the input meanwhile, the paste would
+                    // land where they no longer mean it to; drop it, as the
+                    // browser's own paste event only reaches the focused
+                    // input too.
+                    if this.is_editable()
+                        && this.focus_handle.is_focused(window)
+                        && this.paste_target() == target
+                    {
+                        this.insert_clipboard(clipboard, window, cx);
+                    }
+                })
+                .ok();
+            }
+            Ok(None) => {}
+            Err(error) => tracing::warn!("failed to read the clipboard for paste: {error}"),
+        })
+        .detach();
+    }
+
+    /// Where a paste would go right now: the document as edited so far and
+    /// the selections it would replace. Two equal targets mean an edit made
+    /// for one still applies to the other.
+    fn paste_target(&self) -> PasteTarget {
+        PasteTarget {
+            document_revision: self.document_revision,
+            selections: self.selections.iter().copied().collect(),
+        }
+    }
+
+    /// Inserts the clipboard text the way `Paste` does: one atomic edit,
+    /// newlines dropped on a single-line input, one line per selection when
+    /// the counts match on a multi-line one. A clipboard without text (an
+    /// image, say) is left alone rather than replacing the selection with
+    /// nothing.
+    fn insert_clipboard(
+        &mut self,
+        clipboard: ClipboardItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(mut new_text) = clipboard.text().filter(|text| !text.is_empty()) else {
             return;
         };
-        let mut new_text = clipboard.text().unwrap_or_default();
         // A paste is one atomic edit, never part of a typing run.
         self.undo_manager.set_pending_intent(EditIntent::Atomic);
 
@@ -3057,20 +3153,24 @@ impl<M: InputModeKind> InputBaseState<M> {
             last_line_pos = Some(pos);
         }
 
-        // Mouse is below all visible lines, return end of text. A columnar selection
-        // still needs how far right the pointer was, so measure it against the last
-        // line rather than reporting a block that collapses at the bottom edge.
-        let columns_past_line_end = last_layout
+        // Clamp to the last laid-out row. Returning the end of the whole document
+        // would select unseen text before drag autoscroll has reached it.
+        let last_position = last_layout
             .lines
             .last()
             .zip(last_line_pos)
-            .map(|(line_layout, pos)| {
+            .zip(last_layout.visible_line_byte_offsets.last())
+            .map(|((line_layout, pos), line_start)| {
                 let last_row_top = (line_layout.size(line_height).height - line_height).max(px(0.));
-                line_layout.columns_past_line_end(point(pos.x, last_row_top), last_layout)
-            })
-            .unwrap_or(0);
+                let pos = point(pos.x, last_row_top);
+                (
+                    self.resolve_index(line_start + line_layout.len()),
+                    false,
+                    line_layout.columns_past_line_end(pos, last_layout),
+                )
+            });
 
-        (self.text.len(), false, columns_past_line_end)
+        last_position.unwrap_or((self.text.len(), false, 0))
     }
 
     /// Map a display byte index back to a text offset, undoing the mask expansion when the input
@@ -3157,31 +3257,52 @@ impl<M: InputModeKind> InputBaseState<M> {
         f: impl Fn(&Self, &CursorSelection) -> usize,
         cx: &mut Context<Self>,
     ) {
+        self.select_all_cursors_to_with_affinity(|s, sel| (f(s, sel), false), false, cx);
+    }
+
+    /// Extend selections with caret affinity, preserving their column anchors even
+    /// when vertical movement collapses a selection to a cursor.
+    fn select_all_cursors_to_with_affinity(
+        &mut self,
+        f: impl Fn(&Self, &CursorSelection) -> (usize, bool),
+        preserve_column: bool,
+        cx: &mut Context<Self>,
+    ) {
         self.pause_blink_cursor(cx);
         self.undo_manager.break_transaction_coalescing();
         M::clear_inline_completion(self, cx);
 
+        let mut active_affinity = false;
         let new_selections: Vec<CursorSelection> = self
             .selections
             .iter()
             .map(|sel| {
-                let offset = self.cursor_boundary(f(self, sel), Bias::Left);
+                let (offset, affinity) = f(self, sel);
+                if sel.id == self.active_selection().id {
+                    active_affinity = affinity;
+                }
+                let offset = self.cursor_boundary(offset, Bias::Left);
                 let mut new_sel = *sel;
                 Self::extend_selection(&mut new_sel, offset, None);
                 let range = self.normalize_token_range(new_sel.start..new_sel.end);
                 new_sel.start = range.start;
                 new_sel.end = range.end;
+                if !preserve_column {
+                    new_sel.column_anchor =
+                        self.preferred_column_for_with_affinity(new_sel.cursor_offset(), affinity);
+                } else if new_sel.column_anchor.is_none() {
+                    new_sel.column_anchor = self.preferred_column_for_with_affinity(
+                        sel.cursor_offset(),
+                        self.line_end_affinity_for(sel),
+                    );
+                }
                 new_sel
             })
             .collect();
-        // Resolve targets using the old caret affinity before clearing it.
-        self.cursor_line_end_affinity = false;
+        self.cursor_line_end_affinity = active_affinity;
         self.selections.replace_all(new_selections);
         self.selections.merge_overlapping();
 
-        if self.active_selection().is_empty() {
-            self.update_preferred_column();
-        }
         self.scroll_to(self.cursor(), None, cx);
         cx.notify()
     }
@@ -3290,6 +3411,7 @@ impl<M: InputModeKind> InputBaseState<M> {
             return;
         }
 
+        M::hide_context_menu(self, cx);
         self.undo_manager.break_transaction_coalescing();
 
         // NOTE: Do not cancel select, when blur.
@@ -3576,6 +3698,11 @@ impl<M: InputModeKind> InputBaseState<M> {
             return;
         }
 
+        // Every edit invalidates provider responses for the previous document,
+        // including deletion and indentation which do not trigger completion.
+        M::hide_context_menu(self, cx);
+        M::clear_inline_completion(self, cx);
+
         // Sort descending by start so applying front-of-vec first edits the
         // highest offsets first, leaving lower offsets unchanged.
         let mut sorted: Vec<(Range<usize>, &str)> = edits
@@ -3634,6 +3761,9 @@ impl<M: InputModeKind> InputBaseState<M> {
 
         let auto_closed_pairs_before = self.mode.auto_closed_pairs().clone();
         let mut recorded = false;
+        // Several edits reach the highlighter as one batch, so it reparses
+        // once for the change instead of once per edit.
+        let mut highlighter_edits = Vec::new();
         for (range, new_text) in &sorted {
             let old_text = self.text.clone();
             self.mode.adjust_auto_closed_pair(range, new_text.len());
@@ -3656,22 +3786,43 @@ impl<M: InputModeKind> InputBaseState<M> {
             self.display_map
                 .on_text_changed(&self.text, range, &Rope::from(*new_text), cx);
 
-            self.mode.update_highlighter(
-                super::mode::HighlighterUpdate {
-                    selected_range: range,
-                    old_text: &old_text,
-                    new_text: &self.text,
-                    change_text: new_text,
-                    force: true,
-                },
-                window,
-                cx,
-            );
+            if group {
+                if self.is_code_editor() {
+                    let edit =
+                        super::mode::replacement_input_edit(&old_text, &self.text, range, new_text);
+                    highlighter_edits.push((edit, self.text.clone()));
+                }
+            } else {
+                self.mode.update_highlighter(
+                    super::mode::HighlighterUpdate {
+                        selected_range: range,
+                        old_text: &old_text,
+                        new_text: &self.text,
+                        change_text: new_text,
+                        force: true,
+                    },
+                    window,
+                    cx,
+                );
 
-            self.update_fold_candidates_incremental(range, new_text);
+                self.update_fold_candidates_incremental(range, new_text);
+            }
         }
 
         if group {
+            self.mode
+                .update_highlighter_batch::<M>(&highlighter_edits, window, cx);
+
+            // Fold candidates are read from the reparsed document, so each
+            // edit is located where it ended up once every edit was applied.
+            // `sorted` runs from the highest offset down.
+            let mut shift = 0isize;
+            for (range, new_text) in sorted.iter().rev() {
+                let start = (range.start as isize + shift) as usize;
+                self.update_fold_candidates_incremental(&(start..start), new_text);
+                shift += new_text.len() as isize - range.len() as isize;
+            }
+
             self.undo_manager.commit_transaction();
         }
 
@@ -3813,7 +3964,7 @@ impl<M: InputModeKind> EntityInputHandler for InputBaseState<M> {
     ) -> Option<UTF16Selection> {
         Some(UTF16Selection {
             range: self.range_to_utf16(&self.selected_range()),
-            reversed: false,
+            reversed: self.active_selection().reversed,
         })
     }
 
@@ -4094,6 +4245,9 @@ impl<M: InputModeKind> EntityInputHandler for InputBaseState<M> {
 
         let starts_composition = self.ime_marked_range.is_none();
         if starts_composition {
+            // Even a canceled preedit separates the typing gestures on either
+            // side; its no-op transaction must not reconnect those gestures.
+            self.undo_manager.break_transaction_coalescing();
             self.undo_manager.begin_transaction();
         }
 
@@ -4647,7 +4801,10 @@ impl<M: InputModeKind> Render for InputBaseState<M> {
                 }
             })
             .flex_1()
-            .when(self.is_multi_line(), |this| this.h_full())
+            .h_full()
+            // A single line fills the frame and sits at its vertical center,
+            // so the frame needs no layout of its own to hold it.
+            .when(!self.is_multi_line(), |this| this.flex().items_center())
             .flex_grow_1()
             .overflow_x_hidden()
             .when(self.is_multi_line(), |this| {
@@ -5020,6 +5177,36 @@ mod tests {
                 f(crate::input::InputState::new(window, cx))
             })
         }
+    }
+
+    /// The frame is laid out by the application, which should not have to
+    /// center a single line inside it.
+    #[gpui::test]
+    fn single_line_is_centered_in_a_taller_frame(cx: &mut TestAppContext) {
+        struct Frame(Entity<InputBaseState<InputMode>>);
+        impl Render for Frame {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                crate::input::InputBase::new("frame")
+                    .h(px(60.))
+                    .child(crate::input::Input::new(&self.0))
+            }
+        }
+
+        cx.update(crate::init);
+        let mut input = None;
+        let window = cx.open_window(size(px(400.), px(100.)), |window, cx| {
+            let state = cx.new(|cx| crate::input::InputState::new(window, cx).default_value("a"));
+            input = Some(state.clone());
+            Frame(state)
+        });
+        let input = input.unwrap();
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+
+        input.read_with(&cx, |state, _| {
+            let line = state.input_bounds;
+            assert_eq!(line.center().y, px(30.), "line {line:?}");
+        });
     }
 
     #[gpui::test]
@@ -5776,6 +5963,29 @@ mod tests {
         });
         input.read_with(&cx, |state, _| {
             assert!(!state.search_session().is_active());
+        });
+    }
+
+    /// A closed search skips rescanning on edits, so every path that reads
+    /// the matches again must see the edited text, not the text at close.
+    #[gpui::test]
+    fn test_closed_search_resyncs_matches_after_edits(cx: &mut TestAppContext) {
+        let input_view = InputView::build_editor(cx, |state| state.searchable(false));
+        let mut cx = VisualTestContext::from_window(input_view.window_handle.into(), cx);
+        let input = input_view.input;
+        cx.update(|window, cx| {
+            input.update(cx, |state, cx| {
+                state.set_value("foo bar foo", window, cx);
+                state.set_search_query("foo", true, cx);
+                state.close_search(cx);
+
+                state.set_value("bar foo", window, cx);
+                assert_eq!(state.next_search_match(cx), Some(4..7));
+
+                state.set_value("foo foo foo", window, cx);
+                state.set_search_query("foo", true, cx);
+                assert_eq!(state.search_session().matcher.len(), 3);
+            });
         });
     }
 
@@ -6965,6 +7175,88 @@ mod tests {
                 assert_eq!(s.value(), "X bbb Y");
             });
         });
+    }
+
+    /// A multi-edit change reaches the highlighter once, with every edit in
+    /// application order and the text right after each, which is what the
+    /// default `update_batch` replays through `update` one edit at a time.
+    #[gpui::test]
+    fn test_replace_text_in_ranges_drives_the_highlighter_once(cx: &mut TestAppContext) {
+        use crate::input::{FoldRange, HighlightStyleResolver, InputEdit, InputHighlighter};
+        use gpui::HighlightStyle;
+        use std::cell::RefCell;
+
+        struct RecordingHighlighter(Rc<RefCell<Vec<Vec<String>>>>);
+
+        impl InputHighlighter for RecordingHighlighter {
+            fn language(&self) -> SharedString {
+                "recording".into()
+            }
+
+            fn update(
+                &mut self,
+                _: Option<InputEdit>,
+                text: &Rope,
+                _: bool,
+                _: &mut Window,
+                _: &mut Context<EditorState>,
+            ) {
+                self.0.borrow_mut().push(vec![text.to_string()]);
+            }
+
+            fn update_batch(
+                &mut self,
+                edits: &[(InputEdit, Rope)],
+                _: bool,
+                _: &mut Window,
+                _: &mut Context<EditorState>,
+            ) {
+                let texts = edits.iter().map(|(_, text)| text.to_string()).collect();
+                self.0.borrow_mut().push(texts);
+            }
+
+            fn styles(
+                &self,
+                range: &Range<usize>,
+                _: &dyn HighlightStyleResolver,
+            ) -> Vec<(Range<usize>, HighlightStyle)> {
+                vec![(range.clone(), HighlightStyle::default())]
+            }
+
+            fn fold_ranges(&self, _: &Rope) -> Vec<FoldRange> {
+                Vec::new()
+            }
+        }
+
+        let updates = Rc::new(RefCell::new(Vec::new()));
+        let input_view = InputView::new(cx);
+        let mut cx = VisualTestContext::from_window(input_view.window_handle.into(), cx);
+        let input = input_view.input;
+
+        cx.update(|window, cx| {
+            input.update(cx, |s, cx| {
+                s.set_value("aaa bbb ccc", window, cx);
+                let recorded = updates.clone();
+                s.set_highlighter_factory(
+                    Rc::new(move |_: &str| {
+                        let highlighter: Box<dyn InputHighlighter> =
+                            Box::new(RecordingHighlighter(recorded.clone()));
+                        Some(highlighter)
+                    }),
+                    cx,
+                );
+                s.replace_text_in_ranges(
+                    &[(0..3, "X".to_string()), (8..11, "Y".to_string())],
+                    window,
+                    cx,
+                );
+            });
+        });
+
+        assert_eq!(
+            *updates.borrow(),
+            vec![vec!["aaa bbb Y".to_string(), "X bbb Y".to_string()]]
+        );
     }
 
     /// An IME composition (marking then commit) undoes as a single unit.
@@ -9710,6 +10002,74 @@ mod tests {
         });
         // One clipboard line per cursor.
         assert_cursors(&mut cx, &input, "x|1\ny|2\nz|3");
+    }
+
+    #[gpui::test]
+    fn test_paste_without_text_leaves_the_selection_alone(cx: &mut TestAppContext) {
+        use gpui::{ClipboardEntry, Image, ImageFormat};
+
+        let input_view = InputView::build(cx, |state| state);
+        let mut cx = VisualTestContext::from_window(input_view.window_handle.into(), cx);
+        let input = input_view.input;
+
+        cx.update(|window, cx| {
+            input.update(cx, |state, cx| {
+                state.set_value("hello world", window, cx);
+                state.select_all(window, cx);
+                cx.write_to_clipboard(ClipboardItem {
+                    entries: vec![ClipboardEntry::Image(Image::from_bytes(
+                        ImageFormat::Png,
+                        vec![0x89, b'P', b'N', b'G'],
+                    ))],
+                });
+
+                // An image-only clipboard must not replace the selection
+                // with nothing.
+                state.paste(&Paste, window, cx);
+                assert_eq!(state.value(), "hello world");
+                assert_eq!(state.selected_range(), 0..11);
+            });
+        });
+    }
+
+    #[gpui::test]
+    fn test_paste_target_tracks_edits_and_selections(cx: &mut TestAppContext) {
+        let view = multi_line(cx);
+        let mut cx = VisualTestContext::from_window(view.window_handle.into(), cx);
+        let input = view.input;
+
+        setup_cursors(&mut cx, &input, "ab|c");
+        let target = input.read_with(&cx, |state, _| state.paste_target());
+        // Nothing happened: a paste asked for then still applies.
+        assert_eq!(
+            input.read_with(&cx, |state, _| state.paste_target()),
+            target
+        );
+
+        // Moving the caret changes where the paste would go.
+        cx.update(|_, cx| {
+            input.update(cx, |state, cx| {
+                let id = state.selections.generate_id();
+                state
+                    .selections
+                    .replace_all(vec![CursorSelection::new(id, 1, 1)]);
+                cx.notify();
+            });
+        });
+        let moved = input.read_with(&cx, |state, _| state.paste_target());
+        assert_ne!(moved, target);
+
+        // Editing the text changes it too, even with the caret put back.
+        cx.update(|window, cx| {
+            input.update(cx, |state, cx| {
+                state.replace_text_in_range_silent(None, "x", window, cx);
+                let id = state.selections.generate_id();
+                state
+                    .selections
+                    .replace_all(vec![CursorSelection::new(id, 1, 1)]);
+            });
+        });
+        assert_ne!(input.read_with(&cx, |state, _| state.paste_target()), moved);
     }
 }
 

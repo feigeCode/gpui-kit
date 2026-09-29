@@ -25,6 +25,7 @@ const props = defineProps<{
     starCount: number;
     base: string;
     lang: 'en' | 'zh-CN';
+    kitVersion: string;
 }>();
 
 const isZh = computed(() => props.lang === 'zh-CN');
@@ -77,7 +78,7 @@ const capIcons: Record<string, any> = {
 // `gpui-kit` is the one dependency an application needs: it pins GPUI and
 // carries every layer. The line on screen is what the clipboard gets, with
 // the `[dependencies]` header so it pastes straight into Cargo.toml.
-const installCommand = 'gpui-kit = "0.6.0"';
+const installCommand = `gpui-kit = "${props.kitVersion}"`;
 const installSnippet = ["[dependencies]", installCommand].join("\n");
 
 const copied = ref(false);
@@ -103,13 +104,13 @@ const copy = computed(() =>
               componentsAction: "浏览组件",
               baseAction: "探索 gpui-base",
               signalStars: "GitHub stars",
-              signalLicense: "Apache-2.0 许可",
+              signalLicense: "软件 · Apache-2.0",
               signalPlatforms: "macOS / Windows / Linux / WebAssembly",
               capsKicker: "核心能力",
               capsTitle: "为信息密集型软件而生。",
               capsDescription: "复杂桌面应用真正需要的系统能力，都已整合在框架之中。",
               caps: [
-                  { icon: "perf", title: "120 FPS 渲染", description: "每一帧都由 GPU 绘制，高密度界面依然稳定流畅，不掉帧。", apis: ["RenderOnce", "GPU"] },
+                  { icon: "perf", title: "高刷新率支持", description: "按需更新界面；120 Hz 下每帧约有 8.3 ms 预算，实际流畅度取决于完整界面与设备。", apis: ["RenderOnce", "GPU"] },
                   { icon: "table", title: "复杂数据表格", description: "虚拟滚动、列固定、列宽调整、排序与单元格选择，可承载数十万行。", apis: ["Table", "DataTable"] },
                   { icon: "list", title: "高性能虚拟列表", description: "只渲染可见区域，超长列表滚动依然保持流畅。", apis: ["VirtualList", "List"] },
                   { icon: "editor", title: "完整代码编辑器", description: "Rope 存储，20 万行仍保持稳定性能；内置 Tree-sitter 高亮与 LSP 诊断、补全、悬浮提示。", apis: ["Rope", "Tree-Sitter", "LSP", "Highlighter"] },
@@ -138,7 +139,7 @@ const copy = computed(() =>
               principleLead: "行为属于基础层。",
               principleTail: "视觉属于应用。",
               principleDetail: "gpui-base 处理困难的交互机制：Focus、浮层定位、虚拟化与无障碍；你的产品决定它们最终呈现的样子。",
-              footerPrefix: "基于 Apache-2.0 许可证开源，由",
+              footerPrefix: "GPUI Kit 软件源码及文档中的代码示例采用 Apache-2.0 许可证，由",
               footerSuffix: " 开发。",
               footerBuiltOn: "构建于",
               footerAttribution: " 之上，GPUI 来自 Zed Industries，同样采用 Apache-2.0。",
@@ -158,13 +159,13 @@ const copy = computed(() =>
               componentsAction: "Browse components",
               baseAction: "Explore gpui-base",
               signalStars: "stars on GitHub",
-              signalLicense: "Apache-2.0",
+              signalLicense: "Software · Apache-2.0",
               signalPlatforms: "macOS, Windows, Linux, WebAssembly",
               capsKicker: "Capabilities",
               capsTitle: "Built for information-dense software.",
               capsDescription: "The systems that real desktop applications need are integrated into one framework.",
               caps: [
-                  { icon: "perf", title: "120 FPS rendering", description: "Every frame is drawn by the GPU, so dense interfaces stay smooth instead of dropping frames.", apis: ["RenderOnce", "GPU"] },
+                  { icon: "perf", title: "High refresh support", description: "Update on demand. A 120 Hz display gives each frame about 8.3 ms; smoothness depends on the whole UI and device.", apis: ["RenderOnce", "GPU"] },
                   { icon: "table", title: "Complex data tables", description: "Virtual scrolling, fixed and resizable columns, sorting and cell selection across hundreds of thousands of rows.", apis: ["Table", "DataTable"] },
                   { icon: "list", title: "Virtualized lists", description: "Only the visible range is rendered, so very long lists keep scrolling smoothly.", apis: ["VirtualList", "List"] },
                   { icon: "editor", title: "A real code editor", description: "Rope-backed text that stays stable at 200K lines, with Tree-sitter highlighting and LSP diagnostics, completion and hover.", apis: ["Rope", "Tree-Sitter", "LSP", "Highlighter"] },
@@ -193,7 +194,7 @@ const copy = computed(() =>
               principleLead: "Behavior belongs to the foundation.",
               principleTail: "Presentation belongs to the application.",
               principleDetail: "gpui-base handles the difficult interaction mechanics — focus, overlay positioning, virtualization and accessibility. Your product decides how they should look and feel.",
-              footerPrefix: "Open source under the Apache-2.0 License, developed by",
+              footerPrefix: "GPUI Kit software source and documentation code examples use Apache-2.0; developed by",
               footerSuffix: ".",
               footerBuiltOn: "Built on",
               footerAttribution:

@@ -1,11 +1,11 @@
 ---
-title: 组件
+title: Components
 description: 浏览 75+ 个生产就绪的 Rust UI 组件与原语，覆盖表单、导航、数据、反馈、编辑与应用布局。
 order: 2
 collapsed: false
 ---
 
-# 组件
+# Components
 
 ## 基础组件
 
@@ -58,9 +58,3 @@ collapsed: false
 - [Dock](dock) - 支持标签、分割与状态持久化的生产级 Dock 布局
 - [Tree](tree) - 树形结构组件
 - [VirtualList](virtual-list) - 大数据量虚拟列表
-
-## 翻译说明
-
-组件页已经预置中文路由结构，尚未完成的页面会先显示中文占位说明，并回链到英文原文：
-
-- [English version](/component)

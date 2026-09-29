@@ -693,6 +693,34 @@ PieChart::new(holdings)
     .tooltip_value(|d, _, _| pct(d.ratio))   // 按真实值显示
 ```
 
+### Tooltip 内容
+
+`LineChart`、`AreaChart`、`BarChart`、`RadarChart` 和 `CandlestickChart` 默认用悬停处的 X 值、分类名或维度名作为 tooltip 标题，每行的数值直接显示原始数字。`tooltip_title` 和 `tooltip_value` 根据光标下的数据替换这些文字，`tooltip_value_color` 为每行的数值着色，比如按正负显示绿色或红色。两个闭包都会收到数据和该行的数值；`AreaChart`、`RadarChart` 和 `CandlestickChart` 有多行，闭包在这两者之间还会收到该行的下标（多个系列时按添加顺序；K 线图依次为开、高、低、收）：
+
+```rust
+BarChart::new(flows)
+    .band(|d| d.month.clone())
+    .value(|d| d.net)
+    .tooltip_title(|d| format!("{} 2025", d.month).into())
+    .tooltip_value(|_, value| format!("${value:.2}").into())
+    .tooltip_value_color(move |_, value| if value >= 0. { gain } else { loss })
+```
+
+标题加若干行表达不了的版式（比如表格），用 `tooltip_content` 根据数据自行绘制浮层里的内容。图表的悬停标记（十字线、圆点、高亮带）和浮层的位置仍由图表负责，上面三个文字选项此时不再生效：
+
+```rust
+AreaChart::new(data)
+    .x(|d| d.month.clone())
+    .y(|d| d.last_year)
+    .y(|d| d.revenue)
+    .tooltip_content(|d, _, _| {
+        v_flex()
+            .child(d.month.clone())
+            .child(format!("2025: {}", d.revenue))
+            .child(format!("2024: {}", d.last_year))
+    })
+```
+
 ### 标识
 
 这些行为都以 `ElementId` 为键，图表默认取自己的构造位置作为 id——只写出一次的图表因此天然唯一，绝大多数图表都是这种情况。若同一处构造被渲染成多个同级图表，需要分别命名，否则它们会共用同一份悬停状态与缓存：
@@ -714,17 +742,43 @@ AreaChart::new(range).interactive(false)       // 拖拽手柄下面的底图
 
 第二种尤其要注意：普通 hitbox **不会挡住它后面的 hitbox**，盖在图表上的元素被悬停时，图表**同样**算被悬停，十字线会在它下面继续跟着跑。只能让图表让位。
 
+关闭交互的图表仍保留自己的 id，所以依然有入场动画，也依然保留缓存。
+
 ### 动效
 
-强调效果使用样式层的 motion tokens（`cx.theme().motion_tokens()`）驱动：十字线、高亮条、圆点等指示器以快速弹簧跟随悬停的数据，饼图扇区以 control 弹簧抬起，整个覆盖层在光标落到数据上时淡入、离开后淡出。动效遵循操作系统的减弱动态效果偏好，开启后所有值立即到达目标。
+强调效果使用样式层的 motion tokens（`cx.theme().motion_tokens()`）驱动，主题会把它们作为 [`PlotMotion`](../base/plot.md) 投射到 gpui-base：十字线、高亮条、圆点等指示器以快速弹簧跟随悬停的数据，饼图扇区以 control 弹簧抬起，整个覆盖层在光标落到数据上时淡入、离开后淡出。动效遵循操作系统的减弱动态效果偏好，开启后所有值立即到达目标。
+
+### 入场
+
+图表第一次绘制时，数据会按 `easeOutQuart` 曲线（Chart.js 的默认曲线）在 1000 ms 内画出来：折线、面积、K 线和桑基图像 ECharts、Highcharts、Recharts 那样从左往右展开，柱子从零线同时长出，饼图从第一个扇区顺时针扫开，雷达图从中心向外放大。坐标轴、网格线和刻度文字从第一帧起就完整显示，tooltip 等数据画完才出现。
+
+每个 id 只播放一次入场。之后数据变化会原地重绘，所以接实时行情的图表不会每次推送都重播。图表换成展示别的内容（比如换了股票或周期）时，传一个 key 让它重播：
+
+```rust
+LineChart::new(candles).appear_key((&symbol, period))
+```
+
+图表一旦不再绘制就会忘掉自己的入场，所以虚拟列表里的图表每次滚回视野都会重播。把列表包进 [`PlotAppearScope`](../base/plot.md#appear-scope)，每张图表只入场一次，滚回来时直接完整显示。作用域按列表展示的内容命名（比如一段对话、一个自选列表），切到别的内容或关闭视图后，图表会重新入场：
+
+```rust
+PlotAppearScope::new(("rows", list_id), list(state, render_row).flex_1())
+```
+
+图表完全不需要入场时，把它关掉：
+
+```rust
+LineChart::new(intraday).interactive(false).appear(false)
+```
+
+开启减弱动态效果时跳过入场。
 
 ### 缓存
 
-图表还会跨帧保留较重的几何计算，因为它在屏幕上的每一帧都会重绘：折线与面积的描边、饼图扇区在投影点不变时保持已细分的路径，桑基图在数据、设置和尺寸不变时保留布局。这份缓存挂在同一个 id 上，因此共用 id 的图表会互相冲刷缓存——这是同级图表需要分别命名的另一个理由；而 `interactive(false)` 的图表没有自己的 id，每次绘制都会重算几何。
+图表还会跨帧保留较重的几何计算，因为它在屏幕上的每一帧都会重绘：折线与面积的描边、饼图扇区在投影点不变时保持已细分的路径，桑基图在数据、设置和尺寸不变时保留布局。这份缓存挂在同一个 id 上，因此共用 id 的图表会互相冲刷缓存——这是同级图表需要分别命名的另一个理由。饼图和雷达图入场时每一帧都是新的形状，所以入场结束前每帧都重新细分路径。
 
 ### 自定义 Plot
 
-自定义 [`Plot`] 需要手动接入——那里的 `Plot::id` 仍默认返回 `None`：在 `Plot::id` 返回 id，在 `Plot::tooltip_state` 解析光标所在的数据，在 `Plot::tooltip` 构建覆盖层。这里返回的 `Tooltip` 会自己为悬停加动画，和内置图表一样：整个覆盖层随悬停淡入淡出；十字线和圆点按指针 spring 滑到每个悬停的数据点，光标落下的那一帧直接就位；圆点的 `halo` 随悬停淡入逐渐放大。十字线只沿它标记的那条轴滑动，所以同时跟随光标的那条线不会滞后。传入数据点本身即可，其余交给 tooltip：
+自定义 [`Plot`] 需要手动接入——那里的 `Plot::id` 仍默认返回 `None`。这个 trait、`PlotElement` 和 hover 跟踪都来自 [gpui-base](../base/plot.md)，因此基于 `gpui_kit::base::plot` 编写的 Plot 可以直接在这里使用。在 `Plot::id` 返回 id，在 `Plot::tooltip_state` 解析光标所在的数据，在 `Plot::tooltip` 构建覆盖层。要做入场，就保存 `Plot::appear` 每帧传入的 `PlotAppear`，用它的进度来绘制。这里返回的 `Tooltip` 会自己为悬停加动画，和内置图表一样：整个覆盖层随悬停淡入淡出；十字线和圆点按指针 spring 滑到每个悬停的数据点，光标落下的那一帧直接就位；圆点的 `halo` 随悬停淡入逐渐放大。十字线只沿它标记的那条轴滑动，所以同时跟随光标的那条线不会滞后。传入数据点本身即可，其余交给 tooltip：
 
 ```rust
 fn tooltip(&self, state: &TooltipState, cursor: Point<Pixels>, bounds: Bounds<Pixels>, _: &mut Window, cx: &mut App) -> Option<AnyElement> {
@@ -738,7 +792,19 @@ fn tooltip(&self, state: &TooltipState, cursor: Point<Pixels>, bounds: Bounds<Pi
 }
 ```
 
-如果还要强调 plot 自己的图形——让悬停柱子周围的柱子变淡、让扇区弹出——就实现 `Plot::hover`。它在每帧的 `tooltip` 与 `paint` 之前运行，收到当前聚焦的 [`PlotHover`]；它携带 `TooltipState`，光标离开后会保留一段时间，`hover.focus()` 逐渐回到零，因此在这里采样动效并把结果存到 `self`。`hover.glide` 让一个位置按 tooltip 所用的同一个 spring 移动；把结果交给十字线，并用 `Tooltip::glide(false)` 关掉 tooltip 自己的滑动，避免重复做 spring：
+`value_color` 为最后添加的一行设置数值颜色，比如按正负给涨跌幅着色，需紧跟在那一行之后调用。`plain_row` 添加一行不带色块的内容，用于图上没有对应系列的数字，比如合计或比率；与带色块的行放在一起时，它的标签会与这些行的标签对齐：
+
+```rust
+Tooltip::new(cursor, bounds.size)
+    .title("Apr 5")
+    .row(desktop, "Desktop", "373")
+    .row(mobile, "Mobile", "187")
+    .plain_row("Total", "560")
+    .plain_row("Change", "+12%")
+    .value_color(gain)
+```
+
+如果还要强调 plot 自己的图形——让悬停柱子周围的柱子变淡、让扇区弹出——就实现 `Plot::hover`。它在每帧的 `tooltip` 与 `paint` 之前运行，收到当前悬停的 [`PlotHover`]；它携带 `TooltipState`，光标离开后会保留一段时间，`hover.progress()` 逐渐回到零，因此在这里采样动效并把结果存到 `self`。`hover.glide` 让一个位置按 tooltip 所用的同一个 spring 移动；把结果交给十字线，并用 `Tooltip::glide(false)` 关掉 tooltip 自己的滑动，避免重复做 spring：
 
 ```rust
 fn hover(&mut self, hover: Option<&PlotHover>, window: &mut Window, cx: &mut App) {
@@ -1085,7 +1151,7 @@ div()
 
 图表默认会自动包含：
 
-- 虚线网格
+- 虚线网格，颜色取主题的 `chart.grid`（主题未设置时为半透明的 `border`）
 - 自动定位的 X 轴标签
 - 从 0 开始的 Y 轴刻度
 - 基于 `tick_margin` 的刻度稀疏控制

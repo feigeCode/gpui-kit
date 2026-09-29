@@ -1,8 +1,9 @@
 ---
-title: 示例
+title: Examples
 description: 独立与嵌入式完整应用，包括留存状态、 HostModule 与原生动画。
 order: 3
 pageClass: shell-examples-page
+maturity: [preview]
 ---
 
 # Examples

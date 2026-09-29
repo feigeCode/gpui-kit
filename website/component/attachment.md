@@ -6,8 +6,9 @@ description: A composable file and media attachment surface with lifecycle state
 # Attachment
 
 `Attachment` presents one file or media item. It provides stable layout for a
-media preview, metadata, and optional actions while leaving upload state,
-selection, retry, and navigation in the application. Each public slot is
+media preview, metadata, and optional actions, draws the lifecycle status, and
+offers the two controls every composer needs — remove and retry — while leaving
+upload state, selection, and navigation in the application. Each public slot is
 styleable and accepts arbitrary GPUI children.
 
 The component is intentionally a composition primitive. `AttachmentActions`
@@ -80,11 +81,11 @@ The default state is:
 | Axis | `Horizontal` | Media, metadata, and actions share one row. |
 | Media/content/actions | absent | Add only the slots the item needs. |
 | Surface | `background` and `foreground` | The card surface, separated by the border like shadcn's `bg-card`. |
-| Radius | `radius_2xl()` (`radius_xl` for `XSmall`) | Shared semantic radius. |
+| Radius | `radius_tokens().lg` (`md` for `XSmall`) | Shared semantic radius. |
+| Geometry | 56 px tall, 232 px wide with content, 38 px media (`Medium`) | The composer chip; see [Sizes and axes](#sizes-and-axes). |
 
-`Attachment` sizes itself to its content and never owns a product-level file
-model. Keep the file ID and state in the parent view, then render the current
-record into this element.
+`Attachment` never owns a product-level file model. Keep the file ID and state
+in the parent view, then render the current record into this element.
 
 ## Media and image previews
 
@@ -120,10 +121,18 @@ Attachment::new()
     )
 ```
 
-Only a source image is dimmed while `Uploading`, `Processing`, or `Failed`.
-Overlays and custom children keep full contrast. With no source, the media
-slot is a themed muted area; in a failed state it uses the destructive semantic
-surface and foreground so an error icon remains legible.
+The slot draws the lifecycle status itself. A source image keeps its colors
+and takes a scrim: a translucent dark layer with a white spinner while
+`Uploading` or `Processing`, a darker one with the retry control (see
+[Remove and retry controls](#remove-and-retry-controls)) or an alert glyph once
+`Failed`. Custom overlays are painted above the scrim. With no source, the
+media slot is a themed muted area that shows a spinner in the primary color
+while in progress and, once failed, the destructive semantic surface and
+foreground with an alert glyph; its children come back with `Complete`.
+
+An image tile — a vertical attachment without content — is a square the media
+fills edge to edge, its corners one border width tighter than the card's so the
+two stay concentric.
 
 `AttachmentMedia` is independently styleable. Use `with_size(...)` to override
 the inherited media size, or use normal GPUI refinements for a custom preview
@@ -150,9 +159,9 @@ typed title, description, media, and action layout during rendering:
 | State | Surface/layout behavior | Recommended content |
 | --- | --- | --- |
 | `Pending` | Dashed border; preview is not dimmed. | “Ready to upload” and a start action. |
-| `Uploading` | Preview dims; typed title shimmers. | Progress value and a Cancel button. |
-| `Processing` | Preview dims; typed title shimmers. | “Processing…” and a non-destructive wait state. |
-| `Failed` | Destructive border/description; preview dims when present. | Error reason plus Retry or Remove. |
+| `Uploading` | Media shows a spinner, or a progress ring with `progress(...)` (over a scrim on an image); a chip draws a bar along its bottom edge; typed title shimmers. | A description such as “Uploading”; the percentage is appended for you. |
+| `Processing` | Media shows a spinner (over a scrim on an image); typed title shimmers. | “Processing…” and a non-destructive wait state. |
+| `Failed` | Destructive border and description; media shows the retry control or alert glyph with `on_retry`, the ban glyph without one (a rejection). | Error reason plus `on_retry`, or `tooltip(...)` with the reason and `on_remove`. |
 | `Complete` | Ready surface; preview is full opacity. | File metadata and normal actions. |
 
 ```rust
@@ -243,14 +252,25 @@ Attachment::new().xsmall();
 Attachment::new().small();
 Attachment::new(); // medium (default)
 Attachment::new().large();
-Attachment::new().w_72() // application-owned width when a fixed measure is needed
+Attachment::new().w_auto() // let the chip hug its content instead of the fixed width
 ```
 
-The named sizes adjust gap, typography, padding, media baseline, and radius as
-one scale. Use them to keep attachments aligned with other component densities.
-`Size::Size(...)` is a custom density value, not a width setter; use the normal
-GPUI width refinements (`w_72()`, `w(...)`, or a parent layout) when the product
-needs a fixed measure. Named sizes are preferable for a coherent theme.
+The named sizes set the whole geometry as one scale, in rems so it follows the
+root font size:
+
+| Size | Chip height | Chip width | Media | Title |
+| --- | --- | --- | --- | --- |
+| `XSmall` | 40 px | 176 px | 28 px | 11 px |
+| `Small` | 48 px | 200 px | 32 px | 12 px |
+| `Medium` | 56 px | 232 px | 38 px | 13 px |
+| `Large` | 64 px | 272 px | 44 px | 14 px |
+
+A horizontal card takes the fixed width only when it carries content, so a row
+of chips lines up and long names truncate instead of stretching the card. An
+image tile is a square with the chip's height. `Size::Size(...)` scales the
+`Medium` geometry from a custom base value. Refine with the normal GPUI width
+methods (`w_auto()`, `w_full()`, `w(...)`) when the product needs another
+measure; named sizes are preferable for a coherent theme.
 
 Horizontal is the default and keeps the media, metadata, and actions in one
 row. Vertical moves the preview above the metadata and places actions over the
@@ -335,6 +355,60 @@ and offer the card's primary action as a `Button` or `Link` somewhere reachable
 from the keyboard: the click layer itself is a pointer convenience and takes no
 focus.
 
+## Remove and retry controls
+
+A composer removes attachments and retries failed uploads. Both controls are
+built in, so they look the same in every product and need no wrapper:
+
+```rust
+Attachment::new()
+    .id(("attachment", item.id))
+    .status(item.status)
+    .on_remove(cx.listener(move |this, _, _, cx| this.remove(item.id, cx)))
+    .on_retry(cx.listener(move |this, _, _, cx| this.retry(item.id, cx)))
+    .axis(Axis::Vertical)
+    .media(AttachmentMedia::new().src(thumbnail))
+```
+
+`on_remove` rides a small surface-colored disc with a hairline border on the
+card's upper trailing corner, the way a card's close control usually looks. It appears on hover on
+desktop and stays visible on touch platforms; the card reserves the overhang,
+so a row of cards keeps its alignment. `on_retry` takes effect only while the
+status is `Failed`: an image preview gets a round button in its scrim, and a
+typed description gets a localized “Retry” link after its text. A failed
+attachment without `on_retry` reads as a rejection and shows the ban glyph
+instead. All of these key their element state on `.id(...)`, so they take
+effect only together with it. What removing or retrying means stays with the
+application.
+
+Two more builders complete the composer picture:
+
+```rust
+Attachment::new()
+    .id(("attachment", item.id))
+    .status(AttachmentStatus::Uploading)
+    .progress(item.percent)               // 0..=100
+    .content(
+        AttachmentContent::new()
+            .title(AttachmentTitle::new("Q3 statement.pdf"))
+            .description(AttachmentDescription::new("Uploading")),
+    );
+
+Attachment::new()
+    .id(("attachment", item.id))
+    .status(AttachmentStatus::Failed)
+    .tooltip("Image exceeds 20 MB limit · Remove to send")
+    .on_remove(cx.listener(move |this, _, _, cx| this.remove(item.id, cx)))
+    .axis(Axis::Vertical)
+    .media(AttachmentMedia::new().src(thumbnail))
+```
+
+`progress(percent)` turns the uploading spinner into a determinate ring, draws
+a thin primary bar along a horizontal card's bottom edge, and appends
+“· 62%” to a typed description; it is ignored in every other status.
+`tooltip(text)` shows the text while the card is hovered, which is where the
+reason for a failure or a rejection belongs.
+
 ## Groups
 
 `AttachmentGroup` provides a horizontally scrollable row with the shared group
@@ -351,6 +425,23 @@ The group is `w_full()`, `min_w_0()`, and uses horizontal scrolling. It does not
 provide selection, snapping, reorder handles, a “+N more” overflow label, or a
 preview dialog. Compose those behaviors in an application-owned wrapper. Keep
 the ID stable for the lifetime of the conversation row.
+
+Two builders help a composer or message row that overflows:
+
+```rust
+AttachmentGroup::new("composer-attachments")
+    // Fade each edge into the surface behind the row while it hides content.
+    .with_edge_fade(cx.theme().background)
+    // Drive the scrolling yourself, e.g. from paging buttons.
+    .track_scroll(&self.attachments_scroll)
+    .children(attachments)
+```
+
+`with_edge_fade(color)` draws a short gradient at an edge only while more
+attachments continue past it; a row that fits shows none. The fades sit above
+the attachments and take no pointer events. `track_scroll(&handle)` replaces
+the group's own scroll state with the caller's `ScrollHandle`, so the
+application can move the row and read its offset.
 
 ## Custom styling and theme tokens
 
@@ -429,8 +520,12 @@ These boundaries are deliberate:
 | Method | Default | Purpose |
 | --- | --- | --- |
 | `new()` | `Complete`, `Medium`, `Horizontal`, no slots | Create an attachment. |
-| `id(ElementId)` | none | Stable identity for the whole-card click layer. |
+| `id(ElementId)` | none | Stable identity for the built-in controls: click layer, remove, retry. |
 | `on_click(handler)` | none | Whole-card activation; requires `id(...)` and stays below the actions. |
+| `on_remove(handler)` | none | Corner remove control; requires `id(...)`. |
+| `on_retry(handler)` | none | Retry control while `Failed`; requires `id(...)`. |
+| `progress(percent)` | none | Determinate ring, bottom bar and “· 62%” while `Uploading`. |
+| `tooltip(text)` | none | Hover tooltip, e.g. the failure reason; requires `id(...)`. |
 | `status(AttachmentStatus)` | `Complete` | Set lifecycle styling. |
 | `axis(Axis)` | `Horizontal` | Choose horizontal or vertical layout. |
 | `with_size(Size)` | `Medium` | Set a named or custom size. |
@@ -446,7 +541,7 @@ These boundaries are deliberate:
 | `new()` | no source, no children | Create a media slot. |
 | `src(ImageSource)` | none | Render an image preview. |
 | `with_size(Size)` | inherited attachment size | Override media density. |
-| `overlay(element)` | none | Center an element over the media. |
+| `overlay(element)` | none | Center an element over the media, above the status treatment. |
 | `child(element)` | — | Add an icon or custom content above the preview. |
 | `Styled` methods | themed muted media | Refine geometry, radius, background, and typography. |
 
@@ -471,6 +566,8 @@ These boundaries are deliberate:
 | `AttachmentActions::new()` | empty action layout | Create the action slot. |
 | `.child(element)` | — | Add Button, Link, or another control. |
 | `AttachmentGroup::new(id)` | stable ID required | Create a horizontal scrolling group. |
+| `AttachmentGroup::track_scroll(&ScrollHandle)` | own scroll state | Scroll the row through the caller's handle. |
+| `AttachmentGroup::with_edge_fade(color)` | none | Fade an edge into `color` while it hides attachments. |
 | `AttachmentGroup::child(element)` | — | Add attachments to the group. |
 
 ### Related types

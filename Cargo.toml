@@ -47,29 +47,29 @@ publish = false
 edition = "2024"
 
 [workspace.dependencies]
-gpui-kit = { path = "crates/kit", version = "0.6.5" }
-gpui-component = { path = "crates/component", version = "0.6.5" }
-gpui-base = { path = "crates/base", version = "0.6.5" }
-gpui-component-macros = { path = "crates/component-macros", version = "0.6.5" }
-gpui-kit-assets = { path = "crates/assets", version = "0.6.5" }
-gpui-fps = { path = "crates/fps", version = "0.6.5" }
-gpui-shell = { path = "crates/shell", version = "0.6.5" }
-gpui-wry = { path = "crates/webview", version = "0.6.5" }
-gpui-component-shell = { path = "crates/component-shell", version = "0.6.5" }
+gpui-kit = { path = "crates/kit", version = "0.7.0" }
+gpui-component = { path = "crates/component", version = "0.7.0" }
+gpui-base = { path = "crates/base", version = "0.7.0" }
+gpui-component-macros = { path = "crates/component-macros", version = "0.7.0" }
+gpui-kit-assets = { path = "crates/assets", version = "0.7.0" }
+gpui-fps = { path = "crates/fps", version = "0.7.0" }
+gpui-shell = { path = "crates/shell", version = "0.7.0" }
+gpui-wry = { path = "crates/webview", version = "0.7.0" }
+gpui-component-shell = { path = "crates/component-shell", version = "0.7.0" }
 story = { path = "crates/story" }
 
 # GPUI comes from the `gpui-pre-*` snapshots of Zed's crates, and any snapshot
 # may change GPUI's API. Upstream pins these exactly so the weekly release
 # cannot move applications onto a newer snapshot (#3156). This fork relaxes
 # the pins to caret requirements: downstream (navop) resolves gpui-pre through
-# a [patch] section pointing at fork tags (0.3.114 > 0.3.6), which an exact pin
+# a [patch] section pointing at fork tags (0.3.123 > 0.3.7), which an exact pin
 # would reject. Bump every snapshot crate together with its Cargo.lock entry.
-gpui = { package = "gpui-pre", version = "0.3.6" }
-gpui_platform = { package = "gpui-pre-platform", version = "0.3.6", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
-gpui_web = { package = "gpui-pre-web", version = "0.3.6" }
-gpui_macros = { package = "gpui-pre-macros", version = "0.3.6" }
-reqwest_client = { package = "gpui-pre-reqwest-client", version = "0.3.6" }
-sum-tree = { package = "gpui-pre-sum-tree", version = "0.3.6" }
+gpui = { package = "gpui-pre", version = "0.3.7" }
+gpui_platform = { package = "gpui-pre-platform", version = "0.3.7", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
+gpui_web = { package = "gpui-pre-web", version = "0.3.7" }
+gpui_macros = { package = "gpui-pre-macros", version = "0.3.7" }
+reqwest_client = { package = "gpui-pre-reqwest-client", version = "0.3.7" }
+sum-tree = { package = "gpui-pre-sum-tree", version = "0.3.7" }
 reqwest = { package = "gpui-pre-reqwest", version = "=0.12.15", default-features = false, features = [
     "charset",
     "http2",

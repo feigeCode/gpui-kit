@@ -1,7 +1,8 @@
 ---
-title: 能力授权
+title: Capabilities
 description: 默认全部拒绝的模型，fs / storage / clipboard / process 接口，存储位置，以及沙箱裁掉了什么。
 order: 8
+maturity: [preview]
 ---
 
 # Capabilities
@@ -72,7 +73,7 @@ process.exit() is not granted; set capabilities.process.exit to true in the mani
   "id": "com.example.quotes",
   "name": "Quotes",
   "version": "1.0.0",
-  "shell-version": "0.6.0",
+  "shell-version": "{{gpui_kit_version}}",
   "entry": "main.js",
   "dependencies": {
     "omarchy-ui": "huacnlee/omarchy-ui"

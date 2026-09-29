@@ -1,110 +1,117 @@
 ---
 title: Getting Started
-description: Learn how to set up and use GPUI Component in your project
+description: Build your first GPUI Kit desktop application with one dependency and one view.
 order: -2
 ---
 
 # Getting Started
 
-## Installation
+This guide builds a small desktop window with a GPUI Kit button. You need Rust and Cargo plus the system libraries for your platform; see [Installation](./installation.md) for macOS, Windows and Linux requirements. For a browser target, start with [WebAssembly](./webassembly.md) after learning the view model here.
 
-Add dependencies to your `Cargo.toml`:
+## Create a project
+
+```sh
+cargo new gpui-hello
+cd gpui-hello
+```
+
+Add GPUI Kit to the generated `Cargo.toml`:
 
 ```toml
 [dependencies]
-gpui-kit = "0.6"
-anyhow = "1.0"
+gpui-kit = "{{gpui_kit_version}}"
 ```
 
-:::tip
-`gpui-kit` always pulls in GPUI and `gpui-base`, and by default `gpui-component` and the default icon set. To manage your own assets, keep only the features you need:
+This single dependency includes GPUI, GPUI Base, the styled GPUI Component library and its default icon assets. Application code accesses GPUI through `use gpui_kit::*;` and components through `gpui_kit::component`. You can change the feature selection later; see [Icons & Assets](./assets.md).
 
-```toml
-gpui-kit = { version = "0.6", default-features = false, features = ["component"] }
-```
+## Add a view
 
-See [Icons & Assets](./assets.md) for more details.
-:::
-
-## Quick Start
-
-Here's a simple example to get you started:
+Replace `src/main.rs` with:
 
 ```rust
-use gpui_kit::component::button::*;
-use gpui_kit::component::*;
+use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::*;
 
-pub struct HelloWorld;
+struct HelloWorld;
 
 impl Render for HelloWorld {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div()
-            .v_flex()
-            .gap_2()
+            .flex()
+            .flex_col()
             .size_full()
             .items_center()
             .justify_center()
+            .gap_2()
             .child("Hello, World!")
             .child(
-                Button::new("ok")
+                Button::new("hello")
                     .primary()
-                    .label("Let's Go!")
+                    .label("Click me")
                     .on_click(|_, _, _| println!("Clicked!")),
             )
     }
 }
 
 fn main() {
-    let app = gpui_kit::application().with_assets(gpui_kit::assets::Assets);
+    application()
+        .with_assets(assets::Assets)
+        .run(|cx| {
+            init(cx);
 
-    app.run(move |cx| {
-        // This must be called before using any GPUI Component features.
-        gpui_kit::init(cx);
-
-        // Opens a window with a `Root` wrapping the view, so dialogs, sheets,
-        // notifications and menus work in it.
-        gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| cx.new(|_| HelloWorld))
+            open_window(WindowOptions::default(), cx, |_, cx| {
+                cx.new(|_| HelloWorld)
+            })
             .expect("Failed to open window");
-    });
+        });
 }
 ```
 
-:::info
-Make sure to call `gpui_kit::init(cx);` at first line inside the `app.run` closure. This initializes the GPUI Component system.
+Run `cargo run` from the project directory. A window shows the label and button; clicking the button prints `Clicked!` in the terminal.
 
-This is required for theming and other global settings to work correctly.
-:::
+The startup sequence has three parts:
 
-## Basic Concepts
+1. `gpui_kit::application()` creates the desktop application; `.with_assets(...)` registers the default icon source.
+2. `gpui_kit::init(cx)` initializes the enabled Kit layers, including component themes. Call it once before opening application windows or constructing components.
+3. `gpui_kit::open_window(...)` creates an `Entity<HelloWorld>` from the closure and wraps it in a [`Root`](./window). `Root` owns the window's overlay layers, including dialogs, sheets and notifications. Return your content view from the closure, not another `Root`.
 
-### Stateless Elements
+`HelloWorld` implements GPUI's [`Render`](./render) trait. When GPUI renders the view, `render` returns an [element tree](./element): a `div` containing text and a `Button`. The button is a value built for that render; when a control needs lasting state, such as an input's text, the owning view keeps an [Entity](./entity) for that state instead of recreating it in `render`.
 
-GPUI Component uses stateless [RenderOnce] elements, making them simple and predictable. State management is handled at the view level, not in individual components.
+## A small mental model
 
-They are all implemented [IntoElement] types.
+An [Entity<T>](./entity) holds state across frames. It can own a model without drawing anything; when `T` implements `Render` and is mounted, the entity is a persistent **View** that builds a fresh element tree each time it renders. A [RenderOnce](./render-once) component takes its inputs as a value and describes a reusable piece of that tree. Use one where the caller supplies its state and handlers; it can still use small keyed element state. Give complex state, subscriptions, and tasks a lasting owner.
 
-For example:
-
-```rs
-struct MyView;
-
-impl Render for MyView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .child(Button::new("btn").label("Click Me"))
-            .child(Tag::secondary().child("Secondary"))
-    }
-}
+```text
+app shell → feature (model, commands, view)
+              ├─ Entity<Model>        retained state
+              └─ Entity<View>         retained view; View implements Render
+                    └─ element tree   rebuilt for each render
+                         └─ RenderOnce values for reusable pieces
 ```
 
-### Stateful Components
+As an app grows, a feature with its own workflow can keep its model and views together in a feature crate, with a private [Global](./global) only when it needs truly application-wide state. Let features cooperate through small public interfaces, events, or `Entity` handles. This keeps reusable pieces inexpensive to adopt and gives teammates or AI agents a clear boundary for parallel changes. The [Coding Guides](./coding-guides) explain when to make that split and how to keep ownership and dependencies clear.
 
-See the [tested application recipes](https://github.com/longbridge/gpui-kit/tree/main/examples/ai_recipes) for a complete window with retained subscriptions, icons, and overlay layers. `gpui_kit::open_window` wraps each window's view in a `Root`, which renders the dialog, sheet and notification layers above it.
+## Where to go next
 
-Controls such as Input, List, and DataTable use retained state entities. Store that state on the owning view and construct the styled element from it during render.
+Read these in order as your app grows:
 
-Create the [Entity] once, outside render:
+1. [Entity](./entity.md), [Context](./context.md), and [Render](./render.md): retain a value, change it from a button callback, and confirm the window shows the new value. Read [Window](./window.md) to see how `Root` hosts that view and its overlays.
+2. [Element](./element.md) and [RenderOnce](./render-once.md): distinguish the rebuilt element tree from persistent state. Follow the runnable Brush exercise in [Paint](./paint.md), and confirm a pointer press changes the drawing.
+3. [Focus](./focus.md), [Action](./action.md), and [Event](./event.md): use Tab to reach an interactive target, then trigger one command and observe its state change. Follow [Task](./task.md) to run the streaming example; press Replay twice and confirm old chunks do not return.
+4. [Accessibility](./accessibility.md) and [Testing](./test.md): follow the Save flow with a keyboard, check its focus and visible result, then run the documented UI test and confirm both the rendered status and saved model value. Check assistive technology separately on each target platform.
+5. [Component catalog](../component/index.md): choose controls for your application; then read [Icons & Assets](./assets.md) and [Fonts](./fonts.md) as your interface needs them.
+
+For a tested example of retained input state and subscriptions, read the [application recipes](https://github.com/longbridge/gpui-kit/tree/main/examples/ai_recipes). The [Coding Guides](./coding-guides.md) explain the conventions behind those examples.
+
+## Complete tested view
+
+This settings view is a compiled recipe showing retained input state and subscriptions. The excerpt is synchronized with its [Rust source](https://github.com/longbridge/gpui-kit/blob/main/examples/ai_recipes/src/settings.rs). The repository's default `gpui-kit-recipes` executable opens a small bootstrap view; it does not display this settings view. The [settings interaction test](https://github.com/longbridge/gpui-kit/blob/main/examples/ai_recipes/tests/settings.rs) mounts `Settings` in a GPUI test window. From the repository root, run:
+
+```sh
+cargo test -p gpui-kit-recipes --test settings
+```
+
+The test passes when typing updates the retained preview to `a`, then to `ab` after an unrelated redraw, with change counts of 1 and 2. This verifies the input subscription and state lifetime in a test window; it does not perform a native visual review.
 
 <!-- recipe:settings:start -->
 ```rust
@@ -229,87 +236,3 @@ impl Render for Settings {
 }
 ```
 <!-- recipe:settings:end -->
-
-### Theming
-
-All components support theming through the built-in `Theme` system:
-
-```rust
-use gpui_kit::component::{ActiveTheme, Theme};
-
-// Access theme colors in your components
-cx.theme().primary
-cx.theme().background
-cx.theme().foreground
-```
-
-### Sizing
-
-Most components support multiple sizes:
-
-```rust
-Button::new("btn").small()
-Button::new("btn").medium() // default
-Button::new("btn").large()
-Button::new("btn").xsmall()
-```
-
-### Variants
-
-Components offer different visual variants:
-
-```rust
-Button::new("btn").primary()
-Button::new("btn").danger()
-Button::new("btn").warning()
-Button::new("btn").success()
-Button::new("btn").ghost()
-Button::new("btn").outline()
-```
-
-## Icons
-
-:::info
-Icons are not bundled with GPUI Component to keep the library lightweight.
-
-Continue read [Icons & Assets](./assets.md) to learn how to add icons to your project.
-:::
-
-GPUI Component has an `Icon` element, but does not include SVG files by default.
-
-The examples use [Lucide](https://lucide.dev) icons. You can use any icons you like by naming the SVG files as defined in `IconName`. Add the icons you need to your project.
-
-```rust
-use gpui_kit::component::{Icon, IconName};
-
-Icon::new(IconName::Check)
-Icon::new(IconName::Search).small()
-```
-
-## Next Steps
-
-Explore the component documentation to learn more about each component:
-
-- [Button](../component/button) - Interactive button component
-- [Input](../component/input) - Text input with validation
-- [Dialog](../component/dialog) - Dialog and modal windows
-- [DataTable](../component/data-table) - High-performance data tables
-- [More components...](../component/index)
-
-## Development
-
-To run the component gallery:
-
-```bash
-cargo run
-```
-
-More examples can be found in the `examples` directory:
-
-```bash
-cargo run --example <example_name>
-```
-
-[RenderOnce]: https://docs.rs/gpui/latest/gpui/trait.RenderOnce.html
-[IntoElement]: https://docs.rs/gpui/latest/gpui/trait.IntoElement.html
-[Render]: https://docs.rs/gpui/latest/gpui/trait.Render.html
