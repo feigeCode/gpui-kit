@@ -215,7 +215,7 @@ pub(crate) fn declarations_with_components(components: &crate::FrozenComponentRe
     out.push_str("  /** The fluent builder returned by native and Base element factories. */\n");
     out.push_str("  export interface NativeElement {\n");
     out.push_str(ELEMENT_METHODS);
-    out.push_str("    token(render: (token: import(\"gpui-base\").InlineTokenContext, cx: Context) => Element | null): this;\n    on_token_click(listener: (event: import(\"gpui-base\").InlineTokenClickEvent, cx: Context) => void): this;\n");
+    out.push_str("    token(render: (token: import(\"gpui-base\").InlineTokenContext, cx: Context) => Element | null): this;\n    on_token_click(listener: (event: import(\"gpui-base\").InlineTokenClickEvent, cx: Context) => void): this;\n    on_token_hover(listener: (event: import(\"gpui-base\").InlineTokenHoverEvent, cx: Context) => void): this;\n");
     out.push_str(&parametric_styles(&parametric));
     out.push_str(&nullary_styles(&nullary));
     out.push_str("  }\n");
@@ -2351,6 +2351,10 @@ const INLINE_TOKEN_TYPES: &str = r#"
     bounds: { x: number; y: number; width: number; height: number };
     modifiers: { shift: boolean; alt: boolean; control: boolean; platform: boolean };
   }
+  export interface InlineTokenHoverEvent extends InlineTokenSpan {
+    hovered: boolean;
+    bounds: { x: number; y: number; width: number; height: number };
+  }
 "#;
 
 const BASE: &str = r#"  /** A row. */
@@ -3893,6 +3897,7 @@ mod tests {
         "on_click",
         "token",
         "on_token_click",
+        "on_token_hover",
         "on_mouse_move",
         "on_hover",
         "on_key_down",

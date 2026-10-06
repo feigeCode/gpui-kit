@@ -39,6 +39,14 @@ impl Textarea {
         self.presentation = self.presentation.on_token_click(listener);
         self
     }
+    /// Report pointer presence over a token; hover never selects or edits.
+    pub fn on_token_hover(
+        mut self,
+        listener: impl Fn(&super::InlineTokenHoverEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.presentation = self.presentation.on_token_hover(listener);
+        self
+    }
 }
 
 impl RenderOnce for Textarea {

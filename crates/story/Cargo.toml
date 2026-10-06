@@ -1,6 +1,6 @@
 [package]
 name = "gpui-component-story"
-version = "0.7.0"
+version = "0.7.1"
 publish = false
 edition.workspace = true
 
@@ -12,7 +12,7 @@ default = ["tree-sitter"]
 
 [dependencies]
 anyhow.workspace = true
-gpui-kit.workspace = true
+gpui-kit = { workspace = true, features = ["speech"] }
 gpui-fps.workspace = true
 
 async-channel = "2.3.1"

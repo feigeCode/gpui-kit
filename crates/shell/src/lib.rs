@@ -61,7 +61,7 @@ mod component_registry;
 mod input_tokens;
 pub use input_tokens::{
     InlineTokenCallbacks, inline_token_click_data, inline_token_context_data,
-    input_token_state_methods, textarea_token_state_methods,
+    inline_token_hover_data, input_token_state_methods, textarea_token_state_methods,
 };
 pub(crate) mod dependencies;
 pub mod dock;

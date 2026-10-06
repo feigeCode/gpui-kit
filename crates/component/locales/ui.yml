@@ -432,3 +432,19 @@ Questionnaire:
     zh-CN: 请选择一个答案，或跳过此题。
     zh-HK: 請選擇一個答案，或跳過此題。
     zh-TW: 請選擇一個答案，或跳過此題。
+Speech:
+  Start:
+    en: Dictate
+    zh-CN: 语音输入
+    zh-HK: 語音輸入
+    zh-TW: 語音輸入
+  Stop:
+    en: Stop dictation
+    zh-CN: 停止语音输入
+    zh-HK: 停止語音輸入
+    zh-TW: 停止語音輸入
+  Unavailable:
+    en: Dictation unavailable
+    zh-CN: 语音输入不可用
+    zh-HK: 語音輸入不可用
+    zh-TW: 語音輸入不可用

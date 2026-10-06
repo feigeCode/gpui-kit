@@ -75,6 +75,19 @@ TextView::markdown("themed", source).style(style)
 
 `TextViewStyle::from_theme(&theme)` 可读取 `gpui_kit::base::Theme` 的语义颜色。使用上层组件主题时，可调用 `gpui_kit::component::text::text_view_style(cx.theme())`。
 
+没有显式设置 `.style()` 的 TextView 可以跟随容器设置的文字颜色，这样放在聊天气泡这类有填充底色的容器里也能看清。在应用默认值里开启：
+
+```rust
+use gpui_kit::base::{TextViewDefaults, TextViewStyle};
+
+TextViewDefaults::new()
+    .with_style(TextViewStyle::default())
+    .with_inherit_text_color(true)
+    .install(cx);
+```
+
+正文使用继承来的颜色。如果这个颜色和样式的正文颜色在明度上相差很大，说明底色与页面明暗相反，此时链接、次要文字、代码和表格背景、边框、选择色也都从它推算，并且不再使用已安装的语法高亮。只有在每个窗口的根部都设置了文字颜色时才开启；GPUI Component 的 Root 会设置，Component 也默认开启了这一项。
+
 ## 语法高亮由使用者开启
 
 `gpui-base` 默认不启用语法高亮，也不包含 tree-sitter 语言依赖。应用未提供 `code_block_highlighter` 时，围栏代码块只使用中性的代码背景和普通前景色。
@@ -218,7 +231,7 @@ TextView::new(&document).motion(
 
 不设错位时每次更新整块一起淡入。设了错位时，追加的文字按词拆分（词带上其后的空白），中日韩文字按字拆分；一次追加很长时会压缩错位，保证最后一个词在一个淡入时长内开始。追踪器比较的是渲染后的文字而不是源码字节，因此 `set_text` 传入以当前文本为前缀的更长文本会被视为追加；流式过程中被补齐的 Markdown 标记（`**bo` 变成粗体 `bold`）只让发生变化的字形重新淡入，不会整段闪烁。每次只比较更新触及的块，并且只在还有文字在淡入时才请求下一帧。系统开启减少动态效果时跳过淡入。
 
-`TextViewState::set_range_highlights` 在 `rendered_text()`（与纯文本复制得到的文字一致）的指定范围后面绘制背景，应用可以借此显示搜索结果或引用位置，无需重新解析或修改文档样式。这些范围只参与绘制、不参与排版，因此不会改变布局。`reveal_range` 通过视图自身的列表、外层 `gpui::list`，或者其他容器上的 `TextView::on_reveal`，把范围起点所在的行滚动到可见区域内；规则详见[高亮文本范围](../component/text-view.md#高亮文本范围)和[滚动到范围](../component/text-view.md#滚动到范围)。
+`TextViewState::set_range_highlights` 在 `rendered_text()`（与纯文本复制得到的文字一致）的指定范围后面绘制背景，应用可以借此显示搜索结果或引用位置，无需重新解析或修改文档样式。这些范围只参与绘制、不参与排版，因此不会改变布局。Markdown 源码里的范围（例如 `selected_source_range()` 返回的范围）可以用 `rendered_text().range_for_source(range)` 转换过来。`reveal_range` 通过视图自身的列表、外层 `gpui::list`，或者其他容器上的 `TextView::on_reveal`，把范围起点所在的行滚动到可见区域内；规则详见[高亮文本范围](../component/text-view.md#高亮文本范围)和[滚动到范围](../component/text-view.md#滚动到范围)。
 
 通过 `SelectionFormat` 可以选择复制渲染文本或 Markdown 源码。链接路由、代码块操作、表格操作、图片和 Markdown 插件继续使用与兼容 API 相同的 builder，详见 [gpui-component TextView 文档](../component/text-view.md)。
 

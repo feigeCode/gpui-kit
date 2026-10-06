@@ -4,7 +4,7 @@ mod input;
 mod token;
 pub use gpui_base::input::{
     ActivateToken, InlineToken, InlineTokenClickEvent, InlineTokenContext, InlineTokenError,
-    InlineTokenSpan, InputContent,
+    InlineTokenHoverEvent, InlineTokenSpan, InputContent,
 };
 pub use token::InputToken;
 pub mod language_config;

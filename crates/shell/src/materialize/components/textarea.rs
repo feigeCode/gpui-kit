@@ -66,11 +66,22 @@ pub(in crate::materialize) fn textarea(
         behavior
             .on_token_click
             .map(|id| crate::ComponentCallback::from_runtime(runtime, id)),
+    )
+    .with_hover(
+        &state,
+        behavior
+            .on_token_hover
+            .map(|id| crate::ComponentCallback::from_runtime(runtime, id)),
     );
-    let textarea = callbacks.apply(
-        Textarea::new(&state),
-        |input, render| input.token(move |token, window, cx| render(token, window, cx)),
-        |input, listen| input.on_token_click(move |event, window, cx| listen(event, window, cx)),
+    let textarea = callbacks.apply_hover(
+        callbacks.apply(
+            Textarea::new(&state),
+            |input, render| input.token(move |token, window, cx| render(token, window, cx)),
+            |input, listen| {
+                input.on_token_click(move |event, window, cx| listen(event, window, cx))
+            },
+        ),
+        |input, listen| input.on_token_hover(move |event, window, cx| listen(event, window, cx)),
     );
     frame.child(textarea).into_any_element()
 }

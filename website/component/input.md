@@ -409,6 +409,30 @@ assistive technology reaches the same listener through the token's click action.
 Add a menu item for it through `context_menu` when your application has a name
 for the reference, such as "Open file".
 
+### Show a tooltip or preview on hover
+
+Use `on_token_hover` to react to pointer presence without changing the document.
+Hover never selects or edits; it reports entry and exit so the application can
+show a tooltip, preview, or status detail:
+
+```rust
+use gpui_kit::component::input::InlineTokenHoverEvent;
+
+Input::new(&input)
+    .on_token_hover(|event: &InlineTokenHoverEvent, _, _| {
+        if event.is_hovered() {
+            // Look up event.token().id() and show its preview.
+        }
+        // `false` means the pointer left the token: dismiss the preview.
+    });
+```
+
+The event carries the token, its byte `range()`, the measured `bounds()`, and
+`is_hovered()`. Disabled tokens never report hover entry, matching click;
+readonly tokens do. Removing, replacing, or disabling a hovered token still
+sends its exit event so tooltips dismiss. Keep hover and selection styles the
+same size so the row does not shift under the pointer.
+
 If your token includes a button, consume its mouse-down and click events so that
 it does not also open the reference. Apply `token.is_disabled()` to every child
 action, including accessibility actions, and `token.is_readonly()` to actions
@@ -485,6 +509,9 @@ this.input.set_value({
 new Input(this.input)
   .on_token_click((event, cx) => {
     // Look up event.token.id and open its resource.
+  })
+  .on_token_hover((event, cx) => {
+    // event.hovered is true on entry and false on exit; show or dismiss a preview.
   });
 ```
 

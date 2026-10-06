@@ -183,12 +183,12 @@ GPUI 提供 Action registry 和 keymap 机制，但**用户 keymap 文件格式*
 
 ## 排查快捷键问题
 
-1. **按键：**检查当前平台实际使用的修饰键。`secondary-s` 在 macOS 上是 Command+S，在其他平台是 Control+S；Windows 上的 `cmd-s` 不是 Control+S。
-2. **Focus：**检查哪个 `FocusHandle` 获得 Focus，以及已渲染元素是否用它调用 `track_focus`。只有点击后才生效，通常说明 Focus 路径有问题。
-3. **Context：**检查 predicate 是否匹配路径上的 `key_context`。声明 context 用 `mode=normal`，测试它用 `mode == normal`。
-4. **竞争：**检查更深层 context、同深度后注册的 binding 和 chord 前缀。`None` binding 可能排在较浅的 scoped binding 前面。
-5. **Handler：**检查匹配的 Action 在当前 Focus 路径上是否有 `on_action` handler，以及更具体的 handler 是否提前消费了它。
-6. **菜单与重载：**菜单仍显示旧快捷键时，在安装新 keymap 后再次调用 `cx.set_menus(...)`。组件快捷键在重载后消失时，确认 `clear_key_bindings()` 之后重新运行了所有组件初始化。
+1. **按键**：检查当前平台实际使用的修饰键。`secondary-s` 在 macOS 上是 Command+S，在其他平台是 Control+S；Windows 上的 `cmd-s` 不是 Control+S。
+2. **Focus**：检查哪个 `FocusHandle` 获得 Focus，以及已渲染元素是否用它调用 `track_focus`。只有点击后才生效，通常说明 Focus 路径有问题。
+3. **Context**：检查 predicate 是否匹配路径上的 `key_context`。声明 context 用 `mode=normal`，测试它用 `mode == normal`。
+4. **竞争**：检查更深层 context、同深度后注册的 binding 和 chord 前缀。`None` binding 可能排在较浅的 scoped binding 前面。
+5. **Handler**：检查匹配的 Action 在当前 Focus 路径上是否有 `on_action` handler，以及更具体的 handler 是否提前消费了它。
+6. **菜单与重载**：菜单仍显示旧快捷键时，在安装新 keymap 后再次调用 `cx.set_menus(...)`。组件快捷键在重载后消失时，确认 `clear_key_bindings()` 之后重新运行了所有组件初始化。
 
 ## 用仓库示例验证
 

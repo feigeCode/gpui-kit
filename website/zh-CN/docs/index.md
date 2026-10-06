@@ -31,11 +31,11 @@ GPUI Kit 的核心架构包含五个层次：
 
 可以按以下阶段学习。每一阶段都可以先完成一个小任务，再继续下一阶段：
 
-1. **打开窗口：**按[安装](./installation)和[开始使用](./getting-started)运行按钮示例，确认点击后终端输出消息。
-2. **持有并更新状态：**创建 [Entity](./entity)，通过 [Context](./context) 更新它，再用 [Render](./render) 显示新值。[Window](./window) 说明更新落在哪个窗口。
-3. **绘制自定义控件：**跟着 [Element](./element)、[Geometry](./geometry) 和 [Paint](./paint) 使用现有 Brush 示例；需要稳定身份或复用时，再看 [ElementId](./element_id) 与 [View Cache](./view-cache)。
-4. **处理输入和持续工作：**先用 [Focus](./focus) 建立键盘目标，再用 [Action](./action) 或 [Event](./event) 连接交互；使用 [Task](./task) 执行异步工作，使用 [Animation](./animation) 构建能正确结束的动效。
-5. **检查应用：**用[无障碍](./accessibility)和[测试](./test)核对交互。谈论帧率前先看 [FPS Monitor](./fps)；应用需要相应目标时，再看 [WebAssembly](./webassembly) 或[移动端](./mobile)。
+1. **打开窗口**：按[安装](./installation)和[开始使用](./getting-started)运行按钮示例，确认点击后终端输出消息。
+2. **持有并更新状态**：创建 [Entity](./entity)，通过 [Context](./context) 更新它，再用 [Render](./render) 显示新值。[Window](./window) 说明更新落在哪个窗口。
+3. **绘制自定义控件**：跟着 [Element](./element)、[Geometry](./geometry) 和 [Paint](./paint) 使用现有 Brush 示例；需要稳定身份或复用时，再看 [ElementId](./element_id) 与 [View Cache](./view-cache)。
+4. **处理输入和持续工作**：先用 [Focus](./focus) 建立键盘目标，再用 [Action](./action) 或 [Event](./event) 连接交互；使用 [Task](./task) 执行异步工作，使用 [Animation](./animation) 构建能正确结束的动效。
+5. **检查应用**：用[无障碍](./accessibility)和[测试](./test)核对交互。谈论帧率前先看 [FPS Monitor](./fps)；应用需要相应目标时，再看 [WebAssembly](./webassembly) 或[移动端](./mobile)。
 
 核心页面会区分代码示例与运行结果，并连接后续概念。第一个窗口跑通后，可用
 [编码指南](./coding-guides)整理所有权和架构约定。

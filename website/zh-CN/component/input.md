@@ -351,6 +351,24 @@ Input::new(&input)
 
 单击会先选中 token 再打开引用；拖选或 Shift 扩选不会打开引用。只读输入允许打开引用，禁用输入不允许。若要为打开选中的整块 token 提供快捷键，可以将 `ActivateToken` 绑定到自己选择的按键；辅助技术通过 token 的 click 操作触发同一个监听器。当应用能为引用给出明确名称（例如“打开文件”）时，可以通过 `context_menu` 自行添加菜单项。
 
+### 悬停显示提示或预览
+
+使用 `on_token_hover` 响应指针悬停，不改变文档内容。悬停不会选中或编辑，只报告进入与离开，应用据此显示 tooltip、预览或状态详情：
+
+```rust
+use gpui_kit::component::input::InlineTokenHoverEvent;
+
+Input::new(&input)
+    .on_token_hover(|event: &InlineTokenHoverEvent, _, _| {
+        if event.is_hovered() {
+            // 根据 event.token().id() 查找并显示预览。
+        }
+        // `false` 表示指针离开 token：关闭预览。
+    });
+```
+
+事件携带 token、字节 `range()`、测量得到的 `bounds()` 与 `is_hovered()`。禁用 token 从不上报悬停进入，与点击规则一致；只读 token 会上报。删除、替换或禁用正在悬停的 token 时仍会发送其退出事件，提示应随之关闭。悬停与选中样式应保持尺寸一致，避免行在指针下抖动。
+
 如果 token 内含按钮，应消费按钮的 mouse-down 和 click 事件，避免同时打开引用。所有子操作（包括无障碍操作）都应遵守 `token.is_disabled()`；会修改内容的操作还应遵守 `token.is_readonly()`。
 
 ### 保存、恢复与提交
@@ -406,6 +424,9 @@ this.input.set_value({
 new Input(this.input)
   .on_token_click((event, cx) => {
     // 根据 event.token.id 查找并打开资源。
+  })
+  .on_token_hover((event, cx) => {
+    // event.hovered 为 true 表示进入，为 false 表示离开；据此显示或关闭预览。
   });
 ```
 

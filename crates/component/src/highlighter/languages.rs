@@ -689,4 +689,21 @@ mod tests {
 
         assert_eq!(Language::from_str("unknown"), Language::Plain);
     }
+
+    #[test]
+    fn test_every_language_query_compiles() {
+        let failures: Vec<String> = Language::all()
+            .filter_map(|language| {
+                let config = language.config();
+                let grammar = config.language?;
+                let source = format!(
+                    "{}{}{}",
+                    config.injections, config.locals, config.highlights
+                );
+                let err = tree_sitter::Query::new(&grammar, &source).err()?;
+                Some(format!("{}: {err}", language.name()))
+            })
+            .collect();
+        assert!(failures.is_empty(), "{failures:#?}");
+    }
 }

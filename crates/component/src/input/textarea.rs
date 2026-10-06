@@ -14,6 +14,7 @@ use crate::{RoleOverride, Sizable, Size, StyledExt as _};
 pub struct Textarea {
     token_renderer: Option<gpui_base::input::InlineTokenRenderer>,
     token_click_listener: Option<gpui_base::input::InlineTokenClickListener>,
+    token_hover_listener: Option<gpui_base::input::InlineTokenHoverListener>,
     state: Entity<TextareaState>,
     style: StyleRefinement,
     size: Size,
@@ -56,6 +57,15 @@ impl Textarea {
         self.token_click_listener = Some(Rc::new(listener));
         self
     }
+    /// Report pointer presence over a token so the application can show a
+    /// tooltip or run custom logic. Hover never selects or edits.
+    pub fn on_token_hover(
+        mut self,
+        listener: impl Fn(&super::InlineTokenHoverEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.token_hover_listener = Some(Rc::new(listener));
+        self
+    }
 
     pub fn new(state: &Entity<TextareaState>) -> Self {
         Self {
@@ -75,6 +85,7 @@ impl Textarea {
             paste_handler: None,
             token_renderer: None,
             token_click_listener: None,
+            token_hover_listener: None,
         }
     }
 
@@ -182,6 +193,9 @@ impl Textarea {
             .when_some(self.token_click_listener, |this, listener| {
                 this.on_token_click(move |event, window, cx| listener(event, window, cx))
             })
+            .when_some(self.token_hover_listener, |this, listener| {
+                this.on_token_hover(move |event, window, cx| listener(event, window, cx))
+            })
             .appearance(self.appearance)
             .bordered(self.bordered)
             .disabled(self.disabled)
@@ -233,6 +247,31 @@ mod tests {
             assert!(Textarea::new(&state).paste_handler.is_none());
             let textarea = Textarea::new(&state).on_paste(|_, _, _| true);
             assert!(textarea.paste_handler.is_some());
+            Probe
+        });
+    }
+
+    #[gpui::test]
+    fn test_on_token_hover_builder(cx: &mut gpui::TestAppContext) {
+        use gpui::{AppContext as _, Render};
+
+        struct Probe;
+        impl Render for Probe {
+            fn render(
+                &mut self,
+                _: &mut Window,
+                _: &mut gpui::Context<Self>,
+            ) -> impl gpui::IntoElement {
+                gpui::div()
+            }
+        }
+
+        cx.update(crate::init);
+        let _ = cx.add_window_view(|window, cx| {
+            let state = cx.new(|cx| TextareaState::new(window, cx));
+            assert!(Textarea::new(&state).token_hover_listener.is_none());
+            let textarea = Textarea::new(&state).on_token_hover(|_, _, _| {});
+            assert!(textarea.token_hover_listener.is_some());
             Probe
         });
     }

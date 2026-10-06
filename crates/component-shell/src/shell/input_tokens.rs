@@ -11,6 +11,7 @@ use std::{cell::RefCell, rc::Rc};
 enum Op {
     Render(ComponentArgument),
     Click(ComponentArgument),
+    Hover(ComponentArgument),
     Change(ComponentArgument),
 }
 #[derive(Clone)]
@@ -63,6 +64,20 @@ pub(super) fn methods(include_change: bool) -> Vec<MethodDescriptor> {
         .with_documentation(
             "Activates a reference after a completed unconsumed click, outside the editing borrow.",
         ),
+        MethodDescriptor::new(
+            "on_token_hover",
+            vec![ArgumentDescriptor::new(
+                "listener",
+                ArgumentSchema::Callback("(event: InlineTokenHoverEvent, cx: Context) => void"),
+            )],
+            |args| match args {
+                [arg @ ComponentArgument::Callback(_)] => {
+                    Ok(ComponentPayload::new(Op::Hover(arg.clone())))
+                }
+                _ => Err("on_token_hover expects a listener".into()),
+            },
+        )
+        .with_documentation("Reports pointer presence over a token; hover never selects or edits."),
     ];
     if include_change {
         methods.push(MethodDescriptor::new("on_change", vec![ArgumentDescriptor::new("listener", ArgumentSchema::Callback("(text: string, cx: Context) => void"))], |args| match args {
@@ -80,6 +95,7 @@ pub(super) struct Binding {
 pub(super) fn prepare(request: &MaterializeRequest<'_>, state: State) -> anyhow::Result<Binding> {
     let mut renderer = None;
     let mut listener = None;
+    let mut hover_listener = None;
     let mut change = None;
     for op in request
         .methods()
@@ -88,12 +104,14 @@ pub(super) fn prepare(request: &MaterializeRequest<'_>, state: State) -> anyhow:
         match op {
             Op::Render(arg) => renderer = Some(request.resolve_element_callback(arg)?),
             Op::Click(arg) => listener = Some(request.resolve_callback(arg)?),
+            Op::Hover(arg) => hover_listener = Some(request.resolve_callback(arg)?),
             Op::Change(arg) => change = Some(request.resolve_callback(arg)?),
         }
     }
     let callbacks = dispatch!(&state, |state| InlineTokenCallbacks::new(
         state, renderer, listener
     ));
+    let callbacks = dispatch!(&state, |state| callbacks.with_hover(state, hover_listener));
     Ok(Binding {
         state,
         callbacks,
@@ -102,20 +120,30 @@ pub(super) fn prepare(request: &MaterializeRequest<'_>, state: State) -> anyhow:
 }
 impl Binding {
     pub(super) fn input(&self, input: Input) -> Input {
-        self.callbacks.apply(
-            input,
-            |input, render| input.token(move |token, window, cx| render(token, window, cx)),
+        self.callbacks.apply_hover(
+            self.callbacks.apply(
+                input,
+                |input, render| input.token(move |token, window, cx| render(token, window, cx)),
+                |input, listen| {
+                    input.on_token_click(move |event, window, cx| listen(event, window, cx))
+                },
+            ),
             |input, listen| {
-                input.on_token_click(move |event, window, cx| listen(event, window, cx))
+                input.on_token_hover(move |event, window, cx| listen(event, window, cx))
             },
         )
     }
     pub(super) fn textarea(&self, input: Textarea) -> Textarea {
-        self.callbacks.apply(
-            input,
-            |input, render| input.token(move |token, window, cx| render(token, window, cx)),
+        self.callbacks.apply_hover(
+            self.callbacks.apply(
+                input,
+                |input, render| input.token(move |token, window, cx| render(token, window, cx)),
+                |input, listen| {
+                    input.on_token_click(move |event, window, cx| listen(event, window, cx))
+                },
+            ),
             |input, listen| {
-                input.on_token_click(move |event, window, cx| listen(event, window, cx))
+                input.on_token_hover(move |event, window, cx| listen(event, window, cx))
             },
         )
     }

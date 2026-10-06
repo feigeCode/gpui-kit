@@ -420,7 +420,8 @@ capture phase, locks each gesture to the axis it started on, and stays inert
 while occluded. Edge semantics differ per axis, matching platform scrollers: a
 vertical mask chains to the ancestor at the edge, a horizontal one keeps
 consuming. `horizontal_scroll_area` is the paired viewport and mask, used by the
-Markdown scrolling table.
+Markdown scrolling table. A Markdown code block whose style sets `overflow.y` to
+`Overflow::Scroll` pairs its viewport with a vertical mask and a `Scrollbar`.
 
 One handle represents one logical viewport. Sharing a handle between nested or
 unrelated scroll areas causes offsets, hitboxes, and scrollbar geometry to

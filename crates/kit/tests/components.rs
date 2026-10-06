@@ -3,6 +3,7 @@ use gpui::{AppContext, Context, Entity, TestAppContext, Window, div, prelude::*,
 use gpui_component::{
     Disableable,
     button::Button,
+    clipboard::Clipboard,
     input::{Input, InputState},
     popover::Popover,
 };
@@ -91,6 +92,40 @@ fn button_reports_accessibility_name_without_claiming_visible_text(cx: &mut Test
     cx.update_window(handle.into(), |_, window, cx| {
         window.draw(cx).clear(cx);
         assert_eq!(window.find("save").label(), Some("Save this document"));
+    })
+    .unwrap();
+}
+
+struct NamedClipboard;
+impl Render for NamedClipboard {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .child(
+                Clipboard::new("copy-key")
+                    .value("sk-1234")
+                    .tooltip("Copy")
+                    .accessibility_label("Copy API key"),
+            )
+            .child(
+                Clipboard::new("copy-plain")
+                    .value("sk-1234")
+                    .tooltip("Copy"),
+            )
+    }
+}
+
+#[gpui::test]
+fn clipboard_reports_default_and_explicit_accessibility_names(cx: &mut TestAppContext) {
+    cx.update(gpui_component::init);
+    let (handle, _) = common::open_window(cx, None, |_, cx| cx.new(|_| NamedClipboard));
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.draw(cx).clear(cx);
+        assert_eq!(window.find("copy-key").label(), Some("Copy API key"));
+        assert_eq!(
+            window.find("copy-plain").label(),
+            Some("Copy"),
+            "an icon-only Clipboard needs a name without a caller-provided label"
+        );
     })
     .unwrap();
 }

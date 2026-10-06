@@ -142,12 +142,12 @@ impl Default for InlineCompletion {
 impl InputBaseState<EditorMode> {
     pub(crate) fn handle_completion_trigger(
         &mut self,
-        range: &Range<usize>,
+        _range: &Range<usize>,
         new_text: &str,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.request_completion(range, new_text, false, window, cx);
+        self.request_completion(new_text, false, window, cx);
     }
 
     /// Re-run popup completion at the current cursor without changing the document.
@@ -169,12 +169,11 @@ impl InputBaseState<EditorMode> {
             return;
         }
         let text = self.text.slice(start..cursor).to_string();
-        self.request_completion(&(start..start), &text, true, window, cx);
+        self.request_completion(&text, true, window, cx);
     }
 
     fn request_completion(
         &mut self,
-        range: &Range<usize>,
         new_text: &str,
         force: bool,
         window: &mut Window,
@@ -192,19 +191,38 @@ impl InputBaseState<EditorMode> {
         // It will check if menu is open before showing the suggestion.
         self.schedule_inline_completion(window, cx);
 
-        let start = range.end;
         let new_offset = self.cursor();
+        // Measure the inserted text in the current document. The replaced range
+        // uses pre-edit coordinates, which preceding multi-cursor edits can
+        // shift. The active caret ends immediately after the normalized input,
+        // including selection replacements and IME commits.
+        let Some(start) = new_offset.checked_sub(new_text.len()) else {
+            return;
+        };
 
         if !force && !provider.is_completion_trigger(start, new_text, cx) {
             return;
         }
 
-        let start_offset = self
-            .extras
-            .context_menu_content
-            .completion
-            .trigger_start_offset
-            .unwrap_or(start);
+        // `trigger_start_offset` latches where the word a menu was opened for
+        // begins, so later keystrokes refine the same query instead of starting
+        // over at each character. It only describes this edit while the edit
+        // continues that word: the document between the latch and the edit
+        // must still read as a prefix of the last query. Deleting back into
+        // the word keeps it; typing somewhere else, or into a document that
+        // has since been replaced, starts a new query at this edit instead of
+        // handing the provider text the user never typed as a prefix.
+        let completion = &self.extras.context_menu_content.completion;
+        let latched = completion.trigger_start_offset.filter(|&latched| {
+            latched <= start
+                && start <= latched + completion.query.len()
+                && self.text.is_char_boundary(latched)
+                && self.text.is_char_boundary(start)
+                && completion
+                    .query
+                    .starts_with(self.text.slice(latched..start).to_string().as_str())
+        });
+        let start_offset = latched.unwrap_or(start);
         if new_offset < start_offset {
             return;
         }

@@ -7,6 +7,8 @@ description: 用于复制文本或其它内容到剪贴板的按钮组件。
 
 Clipboard 组件提供了一个简单的复制按钮，可将文本或其它数据复制到用户剪贴板。它默认显示复制图标，在复制成功后会切换为勾选图标。组件既支持静态值，也支持通过回调动态生成复制内容。
 
+这个图标按钮默认使用本地化的“复制”作为无障碍名称。如果需要更明确地说明复制对象，可用 `accessibility_label` 指定名称，例如“复制 API 密钥”。tooltip 只是辅助提示，不会设置无障碍名称。
+
 ## 导入
 
 ```rust
@@ -102,6 +104,7 @@ h_flex()
     .child(
         Clipboard::new("feedback")
             .value("sk-1234567890abcdef")
+            .accessibility_label("复制 API 密钥")
             .on_copied(|_, window, cx| {
                 window.push_notification("API key copied to clipboard", cx)
             })

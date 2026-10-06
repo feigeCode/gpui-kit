@@ -112,6 +112,7 @@ pub(crate) fn input_style(disabled: bool, cx: &App) -> (Hsla, Hsla) {
 pub struct Input {
     token_renderer: Option<gpui_base::input::InlineTokenRenderer>,
     token_click_listener: Option<gpui_base::input::InlineTokenClickListener>,
+    token_hover_listener: Option<gpui_base::input::InlineTokenHoverListener>,
     id: Option<ElementId>,
     state: TextInputState,
     style: StyleRefinement,
@@ -196,6 +197,15 @@ impl Input {
         self.token_click_listener = Some(Rc::new(listener));
         self
     }
+    /// Report pointer presence over a token so the application can show a
+    /// tooltip or run custom logic. Hover never selects or edits.
+    pub fn on_token_hover(
+        mut self,
+        listener: impl Fn(&super::InlineTokenHoverEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.token_hover_listener = Some(Rc::new(listener));
+        self
+    }
 
     /// Sets the GPUI identity of the input frame. By default it uses the state entity ID.
     pub fn id(mut self, id: impl Into<ElementId>) -> Self {
@@ -243,6 +253,7 @@ impl Input {
             paste_handler: None,
             token_renderer: None,
             token_click_listener: None,
+            token_hover_listener: None,
         }
     }
 
@@ -553,6 +564,7 @@ impl RenderOnce for Input {
             ),
             cx,
         );
+        state.install_token_hover_presentation(self.token_hover_listener, cx);
         // Which kind of input this registers as follows from the state itself.
         sync_focused_input_registry(&state, window, cx);
 
@@ -1022,6 +1034,28 @@ mod tests {
             assert!(Input::new(&state).paste_handler.is_none());
             let input = Input::new(&state).on_paste(|_, _, _| true);
             assert!(input.paste_handler.is_some());
+            Probe
+        });
+    }
+
+    #[gpui::test]
+    fn test_on_token_hover_builder(cx: &mut gpui::TestAppContext) {
+        use gpui::{AppContext as _, Render};
+
+        struct Probe;
+        impl Render for Probe {
+            fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+                div()
+            }
+        }
+
+        cx.update(crate::init);
+        let _ = cx.add_window_view(|window, cx| {
+            let state = cx.new(|cx| InputState::new(window, cx));
+
+            assert!(Input::new(&state).token_hover_listener.is_none());
+            let input = Input::new(&state).on_token_hover(|_, _, _| {});
+            assert!(input.token_hover_listener.is_some());
             Probe
         });
     }

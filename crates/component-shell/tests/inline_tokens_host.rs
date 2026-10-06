@@ -60,6 +60,7 @@ export default class TokenHost extends View {
     this.base = exercise(BaseInputState.new());
     this.baseArea = exercise(BaseTextareaState.new());
     this.status = "verified";
+    this.hoverLog = [];
   }
   render() {
     return div().relative().w(400).h(260)
@@ -68,6 +69,10 @@ export default class TokenHost extends View {
         .on_token_click((event, cx) => {
           assert(event.token.id === "a", "current identity");
           this.input.set_value("opened"); this.status = "clicked"; cx.notify();
+        })
+        .on_token_hover((event, cx) => {
+          this.hoverLog.push(`${event.hovered}:${event.range.start}-${event.range.end}:${event.token.id}`);
+          cx.notify();
         }))
       .child(new Textarea(this.textarea).w(350).h(60))
       .child(new Input(this.child).absolute().top(140).left(0).w(350)
@@ -76,7 +81,7 @@ export default class TokenHost extends View {
             .on_mouse_down("left", (_event, cx) => cx.stop_propagation())
             .on_click((_event, cx) => { this.child.set_value("removed"); this.status = "child"; cx.stop_propagation(); cx.notify(); })))
         .on_token_click((_event, cx) => { this.status = "wrong body activation"; cx.notify(); }))
-      .child(div().child(`${this.status}:${this.input.value()}:${this.input.tokens().length};child=${this.child.tokens().length}:${this.child.value()}`));
+      .child(div().child(`${this.status}:${this.input.value()}:${this.input.tokens().length};child=${this.child.tokens().length}:${this.child.value()};hover=${this.hoverLog.join("|")}`));
   }
 }
 "#,
@@ -105,9 +110,16 @@ export default class TokenHost extends View {
         draw(&mut context).contains("verified:🙂 @a!:1"),
         "rerender preserves identity"
     );
+    context.simulate_mouse_move(point(px(65.), px(16.)), None, Modifiers::default());
+    context.run_until_parked();
+    let result = draw(&mut context);
+    assert!(result.contains("hover=true:3-5:a"), "{result}");
     context.simulate_click(point(px(65.), px(16.)), Modifiers::default());
     let result = draw(&mut context);
     assert!(result.contains("clicked:opened:0"), "{result}");
+    // The token is gone after the click opened it, but its exit must still
+    // report the coordinates captured at entry, not the new text clamped.
+    assert!(result.contains("false:3-5:a"), "{result}");
     // The custom child's callback survives the frame and consumes its own gesture.
     let child_bounds = context.update(|window, _| {
         gpui_base::test_support::find(window, &[], &gpui::ElementId::from("remove-token-child"))

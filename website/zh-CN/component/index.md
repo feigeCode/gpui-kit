@@ -36,6 +36,7 @@ collapsed: false
 - [DatePicker](date-picker) - 日期选择器
 - [TimeField](time-field) - 分段时间输入
 - [OtpInput](otp-input) - 一次性验证码输入
+- [Speech](speech) - 通过系统或自定义识别器进行语音输入
 - [ColorPicker](color-picker) - 颜色选择器
 - [Questionnaire](questionnaire) - 可组合的多步骤问卷与答案
 - [Form](form) - 表单容器与布局

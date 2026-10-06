@@ -60,6 +60,7 @@ icons/map.svg
 icons/maximize.svg
 icons/memory-stick.svg
 icons/menu.svg
+icons/mic.svg
 icons/minimize.svg
 icons/minus.svg
 icons/moon.svg
@@ -88,6 +89,7 @@ icons/settings.svg
 icons/sort-ascending.svg
 icons/sort-descending.svg
 icons/square-terminal.svg
+icons/square.svg
 icons/star-fill.svg
 icons/star-off.svg
 icons/star.svg

@@ -30,6 +30,7 @@ pub(crate) type CodeBlockHighlighterFn =
 pub struct TextViewDefaults {
     style: Option<TextViewStyle>,
     code_block_highlighter: Option<Arc<CodeBlockHighlighterFn>>,
+    inherit_text_color: bool,
 }
 
 impl Global for TextViewDefaults {}
@@ -55,6 +56,19 @@ impl TextViewDefaults {
         self
     }
 
+    /// Sets whether text views without an explicit [`TextView::style`] follow
+    /// the text color their container sets, default false.
+    ///
+    /// The body text takes that color. On a surface inverted from the page,
+    /// such as a `primary` fill, links, muted text, code, borders and
+    /// selection are derived from it too, and the installed syntax highlighter
+    /// is left out because its colors are made for the page. Enable this only
+    /// when every window sets a text color at its root, as Component's does.
+    pub fn with_inherit_text_color(mut self, inherit: bool) -> Self {
+        self.inherit_text_color = inherit;
+        self
+    }
+
     /// Installs these defaults for the whole application.
     pub fn install(self, cx: &mut App) {
         cx.set_global(self);
@@ -68,6 +82,11 @@ impl TextViewDefaults {
     /// Whether a syntax highlighter was installed.
     pub fn has_code_block_highlighter(&self) -> bool {
         self.code_block_highlighter.is_some()
+    }
+
+    /// Whether text views follow the text color their container sets.
+    pub fn inherit_text_color(&self) -> bool {
+        self.inherit_text_color
     }
 }
 
@@ -617,7 +636,7 @@ impl Element for TextView {
         // style only reaches the state when it changed.
         let defaults = cx.try_global::<TextViewDefaults>();
         let theme_style;
-        let text_view_style = match (
+        let mut text_view_style = match (
             &self.text_view_style,
             defaults.and_then(|d| d.style.as_ref()),
         ) {
@@ -627,13 +646,30 @@ impl Element for TextView {
                 &theme_style
             }
         };
+        // Follow the text color the container sets for its surface, so rich
+        // text stays readable in a filled bubble or a selected row.
+        let surface_style;
+        let mut on_inverted_surface = false;
+        if self.text_view_style.is_none() && defaults.is_some_and(|d| d.inherit_text_color) {
+            let color = self
+                .style
+                .text
+                .color
+                .unwrap_or_else(|| window.text_style().color);
+            if color != text_view_style.foreground() {
+                on_inverted_surface = text_view_style.is_inverted_by(color);
+                surface_style = text_view_style.on_text_color(color);
+                text_view_style = &surface_style;
+            }
+        }
         let foreground = text_view_style.foreground();
         let text_view_style = (*state.read(cx).text_view_style != *text_view_style)
             .then(|| Arc::new(text_view_style.clone()));
-        let code_block_highlighter = self
-            .code_block_highlighter
-            .clone()
-            .or_else(|| defaults.and_then(|d| d.code_block_highlighter.clone()));
+        let code_block_highlighter = self.code_block_highlighter.clone().or_else(|| {
+            defaults
+                .filter(|_| !on_inverted_surface)
+                .and_then(|d| d.code_block_highlighter.clone())
+        });
 
         state.update(cx, |state, cx| {
             state.code_block_actions = self.code_block_actions.clone();
@@ -870,7 +906,8 @@ mod tests {
         AppContext as _, Bounds, ClickEvent, Context, Entity, InteractiveElement as _, IntoElement,
         Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Overflow, ParentElement as _, Pixels,
         Render, SharedString, StatefulInteractiveElement as _, StyleRefinement, Styled as _,
-        TestAppContext, VisualTestContext, Window, div, point, px, rems,
+        TestAppContext, VisualTestContext, Window, div, point, prelude::FluentBuilder as _, px,
+        rems,
     };
 
     struct TextViewTestRoot {
@@ -934,6 +971,57 @@ mod tests {
                         ),
                 )
         }
+    }
+
+    #[gpui::test]
+    fn text_view_follows_the_text_color_of_its_container(cx: &mut TestAppContext) {
+        struct Root {
+            inherited: Entity<TextViewState>,
+            explicit: Entity<TextViewState>,
+            surface_text: gpui::Hsla,
+        }
+        impl Render for Root {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .w(px(300.))
+                    .text_color(crate::ColorTokens::light().foreground)
+                    .child(
+                        div()
+                            .text_color(self.surface_text)
+                            .child(TextView::new(&self.inherited))
+                            .child(TextView::new(&self.explicit).style(TextViewStyle::default())),
+                    )
+            }
+        }
+
+        let colors = crate::ColorTokens::light();
+        cx.update(|cx| {
+            crate::init(cx);
+            super::TextViewDefaults::new()
+                .with_style(TextViewStyle::default())
+                .with_inherit_text_color(true)
+                .install(cx);
+        });
+        let (root, cx) = cx.add_window_view(|_, cx| Root {
+            inherited: cx.new(|cx| TextViewState::markdown("[link](https://a.b) `code`", cx)),
+            explicit: cx.new(|cx| TextViewState::markdown("text", cx)),
+            surface_text: colors.primary_foreground,
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+
+        root.read_with(cx, |root, cx| {
+            let inherited = &root.inherited.read(cx).text_view_style;
+            assert_eq!(inherited.foreground(), colors.primary_foreground);
+            assert_eq!(inherited.link(), colors.primary_foreground);
+            assert!(inherited.is_dark());
+
+            let explicit = &root.explicit.read(cx).text_view_style;
+            assert_eq!(explicit.foreground(), colors.foreground);
+            assert_eq!(explicit.link(), TextViewStyle::default().link());
+        });
     }
 
     #[gpui::test]
@@ -1676,6 +1764,93 @@ mod tests {
         );
     }
 
+    /// Height cap of the scrolling code block in [`ScrollingCodeRoot`].
+    const CODE_HEIGHT: Pixels = px(60.);
+
+    struct ScrollingCodeRoot {
+        text_view: Entity<TextViewState>,
+        actions: bool,
+    }
+
+    impl Render for ScrollingCodeRoot {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let mut code_block = StyleRefinement::default().max_h(CODE_HEIGHT);
+            code_block.overflow.y = Some(Overflow::Scroll);
+
+            div().w(px(320.)).h(px(200.)).child(
+                TextView::new(&self.text_view)
+                    .style(TextViewStyle::default().with_code_block(code_block))
+                    .when(self.actions, |this| {
+                        this.code_block_actions(|_, _, _| {
+                            div().debug_selector(|| "code-action".into()).child("Copy")
+                        })
+                    })
+                    .scrollable(true),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn scrolling_code_block_keeps_wheel_from_the_list(cx: &mut TestAppContext) {
+        cx.update(crate::init);
+        let code = (0..50).map(|i| format!("line {i}\n")).collect::<String>();
+        let tail = "Paragraph after the code.\n\n".repeat(20);
+        let markdown = format!("```\n{code}```\n\n{tail}");
+
+        // Scrolling must not depend on `code_block_actions`, which is what
+        // gives a non-scrolling block its id.
+        for actions in [false, true] {
+            let (root, cx) = cx.add_window_view(|_, cx| ScrollingCodeRoot {
+                text_view: cx.new(|cx| TextViewState::markdown(&markdown, cx)),
+                actions,
+            });
+            let cx: &mut VisualTestContext = cx;
+            let draw = |cx: &mut VisualTestContext| {
+                cx.run_until_parked();
+                cx.update(|window, cx| window.draw(cx).clear(cx));
+            };
+            let step = px(20.);
+            let wheel_at = |cx: &mut VisualTestContext, y: Pixels| {
+                cx.simulate_event(gpui::ScrollWheelEvent {
+                    position: point(px(20.), y),
+                    delta: gpui::ScrollDelta::Pixels(point(px(0.), -step)),
+                    ..Default::default()
+                });
+            };
+            // The code block is first in the view, and painted lines are
+            // clipped to its viewport: the first code line's bottom moves with
+            // the code, the first line below the viewport moves with the list.
+            let edges = |cx: &mut VisualTestContext| {
+                let lines = root.read_with(cx, |root, cx| {
+                    root.text_view.read(cx).selection_adapter.text_bounds()
+                });
+                let paragraph = lines.iter().find(|line| line.top() >= CODE_HEIGHT).unwrap();
+                (lines[0].bottom(), paragraph.top())
+            };
+            draw(cx);
+            let (code_bottom, paragraph_top) = edges(cx);
+            let action = cx.debug_bounds("code-action");
+
+            // Over the code block: the code scrolls, the list and the pinned
+            // actions stay put.
+            wheel_at(cx, CODE_HEIGHT / 2.);
+            draw(cx);
+            assert_eq!(
+                edges(cx),
+                (code_bottom - step, paragraph_top),
+                "actions: {actions}"
+            );
+            assert_eq!(cx.debug_bounds("code-action"), action);
+
+            // Below the code block the list still scrolls. Only inequality
+            // holds: once the paragraph moves into the code's band, `edges`
+            // picks the next one down.
+            wheel_at(cx, CODE_HEIGHT * 2.5);
+            draw(cx);
+            assert_ne!(edges(cx).1, paragraph_top, "actions: {actions}");
+        }
+    }
+
     /// Draw a Markdown table with a `table_actions` hook installed, and return
     /// the painted bounds of the actions element plus the data it received.
     /// `scroll` opts into the horizontally scrollable table layout.
@@ -2097,8 +2272,9 @@ mod tests {
         cx.run_until_parked();
         cx.simulate_click(point(px(10.), px(10.)), Modifiers::default());
         assert_eq!(cx.opened_url(), Some("https://example.com".to_string()));
+        // Just past the code span's leading padding, on its first glyph.
         cx.simulate_mouse_down(
-            point(px(3.), px(8.)),
+            point(px(5.), px(8.)),
             MouseButton::Left,
             Modifiers::default(),
         );
@@ -2282,7 +2458,7 @@ mod tests {
 
             let mut markers = shaped_lines
                 .into_iter()
-                .filter(|line| line.ends_with(". "))
+                .filter(|line| line.len() <= 3 && line.ends_with('.'))
                 .collect::<Vec<_>>();
             markers.dedup();
             markers
@@ -2291,28 +2467,28 @@ mod tests {
         let starts_at_one = "1. one\n2. two";
         assert_eq!(
             shaped_markers(Format::Markdown, starts_at_one),
-            ["1. ", "2. "]
+            ["1.", "2."]
         );
         assert_eq!(
             shaped_markers(Format::Html, "<ol><li>one</li><li>two</li></ol>"),
-            ["1. ", "2. "]
+            ["1.", "2."]
         );
 
         assert_eq!(
             shaped_markers(Format::Markdown, "3. hello\n4. world"),
-            ["3. ", "4. "]
+            ["3.", "4."]
         );
 
         let nested_starts_at_four = "1. outer\n\n   4. nested\n   5. again";
         assert_eq!(
             shaped_markers(Format::Markdown, nested_starts_at_four),
-            ["1. ", "D. ", "E. "]
+            ["1.", "D.", "E."]
         );
 
         let nested_starts_at_zero = "1. outer\n\n   0. zero";
         assert_eq!(
             shaped_markers(Format::Markdown, nested_starts_at_zero),
-            ["1. ", "0. "]
+            ["1.", "0."]
         );
     }
 

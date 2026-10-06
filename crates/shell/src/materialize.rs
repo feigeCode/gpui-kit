@@ -337,6 +337,7 @@ struct Behavior {
     on_change: Option<CallbackId>,
     token: Option<CallbackId>,
     on_token_click: Option<CallbackId>,
+    on_token_hover: Option<CallbackId>,
     on_mouse_move: Option<CallbackId>,
     on_hover: Option<CallbackId>,
     /// Reports a key press that reached this element.
@@ -1513,12 +1514,23 @@ fn materialize_component(
                 behavior
                     .on_token_click
                     .map(|id| crate::ComponentCallback::from_runtime(runtime, id)),
+            )
+            .with_hover(
+                &state,
+                behavior
+                    .on_token_hover
+                    .map(|id| crate::ComponentCallback::from_runtime(runtime, id)),
             );
-            let input = callbacks.apply(
-                Input::new(&state),
-                |input, render| input.token(move |token, window, cx| render(token, window, cx)),
+            let input = callbacks.apply_hover(
+                callbacks.apply(
+                    Input::new(&state),
+                    |input, render| input.token(move |token, window, cx| render(token, window, cx)),
+                    |input, listen| {
+                        input.on_token_click(move |event, window, cx| listen(event, window, cx))
+                    },
+                ),
                 |input, listen| {
-                    input.on_token_click(move |event, window, cx| listen(event, window, cx))
+                    input.on_token_hover(move |event, window, cx| listen(event, window, cx))
                 },
             );
             frame.child(input).into_any_element()
@@ -2518,6 +2530,7 @@ pub(in crate::materialize) fn resolve_ops(
                 "on_change" => behavior.on_change = Some(*id),
                 "token" => behavior.token = Some(*id),
                 "on_token_click" => behavior.on_token_click = Some(*id),
+                "on_token_hover" => behavior.on_token_hover = Some(*id),
                 "on_step" => behavior.on_step = Some(*id),
                 "on_open_change" => behavior.on_open_change = Some(*id),
                 "on_confirm" => behavior.on_confirm = Some(*id),

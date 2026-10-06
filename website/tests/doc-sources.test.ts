@@ -96,6 +96,37 @@ test('GPUI snapshot versions come from the workspace pin', () => {
   assert.deepEqual(failures, [], failures.join('\n'));
 });
 
+test('GPUI Kit versions come from the release variable', () => {
+  // A Kit version written out by hand is frozen into the build of whichever tag
+  // ships it: `/` is built from the latest release, so the literal cannot follow
+  // the crate it documents, and the next release leaves the docs advertising a
+  // requirement that no longer exists. #3340 is what that looks like from the
+  // outside — `/docs/installation/` telling a reader to depend on 0.6 while the
+  // examples use the 0.7 API — because the placeholder was introduced after
+  // v0.7.0 was tagged.
+  //
+  // Only the forms that actually encode the dependency are matched: a Cargo
+  // declaration (bare or in the `{ version = .. }` table form) and a docs.rs
+  // link pinned to a version. Prose that mentions the crate alongside an
+  // unrelated version is not a pin. `gpui-kit-assets` and `docs.rs/…/latest`
+  // are deliberately not matched.
+  const DEPENDENCY = /\bgpui-kit\b(?!-)\s*=\s*(?:\{[^}]*\bversion\s*=\s*)?"\d+\.\d+(?:\.\d+)?"/;
+  const PINNED_DOCS_RS = /docs\.rs\/(?:crate\/)?gpui-kit\/\d/;
+  const failures: string[] = [];
+  for (const file of files) {
+    read(file).split('\n').forEach((line, index) => {
+      const at = `${file}:${index + 1}`;
+      if (DEPENDENCY.test(line)) {
+        failures.push(`${at} writes a GPUI Kit version — use {{gpui_kit_version}}`);
+      }
+      if (PINNED_DOCS_RS.test(line)) {
+        failures.push(`${at} links a fixed gpui-kit version on docs.rs — use {{gpui_kit_version}}, or /latest/`);
+      }
+    });
+  }
+  assert.deepEqual(failures, [], failures.join('\n'));
+});
+
 test('both locales mark a page with the same maturity', () => {
   const maturity = (file: string) =>
     read(file).match(/^---\n[\s\S]*?^maturity:\s*(.+)$[\s\S]*?^---/m)?.[1]?.trim() ?? '';
