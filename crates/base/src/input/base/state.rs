@@ -8424,6 +8424,87 @@ mod tests {
             .read_with(&mut editor_cx, |state, _| assert!(state.soft_wrap));
     }
 
+    /// Two editors stacked in auto-height rows, so one window compares how the
+    /// two row counts lay out.
+    struct AutoHeightRowHeights {
+        one_row: Entity<crate::input::EditorState>,
+        two_rows: Entity<crate::input::EditorState>,
+    }
+
+    impl Render for AutoHeightRowHeights {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .flex()
+                .flex_col()
+                .child(auto_height_row(self.one_row.clone()))
+                .child(auto_height_row(self.two_rows.clone()))
+        }
+    }
+
+    /// A slot that takes its height from the editor, the way a filter bar does.
+    fn auto_height_row(
+        editor: Entity<crate::input::EditorState>,
+    ) -> impl IntoElement {
+        div().flex().flex_row().items_center().child(editor)
+    }
+
+    /// The row count decides how tall a code editor lays out when its slot
+    /// takes the height from its content, and it goes below the two-row
+    /// default — the height a single-line context needs.
+    #[gpui::test]
+    fn test_rows_set_the_code_editor_layout_height(cx: &mut TestAppContext) {
+        let mut one_row = None;
+        let mut two_rows = None;
+        let window = cx.update(|cx| {
+            cx.open_window(Default::default(), |window, cx| {
+                cx.set_global(Theme::default());
+                super::super::init(cx);
+
+                one_row = Some(cx.new(|cx| {
+                    crate::input::EditorState::new(window, cx)
+                        .language("sql")
+                        .rows(1)
+                }));
+                two_rows = Some(
+                    cx.new(|cx| crate::input::EditorState::new(window, cx).language("sql")),
+                );
+
+                cx.new(|_| AutoHeightRowHeights {
+                    one_row: one_row.clone().unwrap(),
+                    two_rows: two_rows.clone().unwrap(),
+                })
+            })
+            .unwrap()
+        });
+
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        cx.run_until_parked();
+
+        let two_rows = two_rows.unwrap();
+        let (one_row_height, two_rows_height, line_height) =
+            one_row.unwrap().read_with(&mut cx, |one, cx| {
+                (
+                    one.last_bounds.expect("laid out").size.height,
+                    two_rows
+                        .read(cx)
+                        .last_bounds
+                        .expect("laid out")
+                        .size.height,
+                    one.line_height().expect("line height"),
+                )
+            });
+
+        assert_eq!(
+            one_row_height, line_height,
+            "a one-row editor is one line tall, not two"
+        );
+        assert_eq!(
+            two_rows_height,
+            line_height * 2.,
+            "the default is still two rows"
+        );
+    }
+
     /// Parse a cursor spec into `(text, cursor_offsets)`. Non-empty lines are
     /// joined with `\n` plus a trailing `\n`. `|` marks a cursor. Leading
     /// whitespace is kept, so a spec can express indentation.
@@ -10963,6 +11044,44 @@ impl<M: crate::input::MultiLineMode> InputBaseState<M> {
         self.display_map.set_wrapping_indent(wrapping_indent, cx);
         cx.notify();
     }
+
+    /// Set how many rows the input reserves when it is laid out.
+    ///
+    /// The input keeps this height instead of growing past it: text that does
+    /// not fit scrolls. A code editor starts at two rows, and the row count
+    /// lives on the layout mode rather than on the element, so this is the way
+    /// to lay one out shorter than that.
+    ///
+    /// Ignored by a single-line input, whose height is always one line.
+    ///
+    /// default: 1
+    pub fn rows(mut self, rows: usize) -> Self {
+        self.set_mode_rows(rows);
+        self
+    }
+
+    /// See [`InputBaseState::rows`].
+    pub fn set_rows(&mut self, rows: usize, cx: &mut Context<Self>) {
+        self.set_mode_rows(rows);
+        cx.notify();
+    }
+
+    /// Write `rows` into whichever layout mode this state carries.
+    fn set_mode_rows(&mut self, rows: usize) {
+        match &mut self.mode {
+            LayoutMode::PlainText { rows: r, .. } | LayoutMode::CodeEditor { rows: r, .. } => {
+                *r = rows
+            }
+            LayoutMode::AutoGrow {
+                max_rows,
+                rows: r,
+                ..
+            } => {
+                *r = rows;
+                *max_rows = rows;
+            }
+        }
+    }
 }
 
 /// Methods that only ordinary multi-line text offers.
@@ -10977,46 +11096,6 @@ impl InputBaseState<crate::input::TextareaMode> {
 
     pub fn set_auto_grow(&mut self, min_rows: usize, max_rows: usize, cx: &mut Context<Self>) {
         self.mode = LayoutMode::auto_grow(min_rows, max_rows.max(min_rows));
-        cx.notify();
-    }
-
-    /// Set the number of rows for the multi-line Textarea.
-    ///
-    /// This is only used when `multi_line` is set to true. The input is at least
-    /// this many lines tall.
-    ///
-    /// default: 1
-    #[doc(hidden)]
-    pub fn rows(mut self, rows: usize) -> Self {
-        match &mut self.mode {
-            LayoutMode::PlainText { rows: r, .. } | LayoutMode::CodeEditor { rows: r, .. } => {
-                *r = rows
-            }
-            LayoutMode::AutoGrow {
-                max_rows: max_r,
-                rows: r,
-                ..
-            } => {
-                *r = rows;
-                *max_r = rows;
-            }
-        }
-        self
-    }
-
-    pub fn set_rows(&mut self, rows: usize, cx: &mut Context<Self>) {
-        match &mut self.mode {
-            LayoutMode::PlainText { rows: value, .. }
-            | LayoutMode::CodeEditor { rows: value, .. } => *value = rows,
-            LayoutMode::AutoGrow {
-                rows: value,
-                max_rows,
-                ..
-            } => {
-                *value = rows;
-                *max_rows = rows;
-            }
-        }
         cx.notify();
     }
 
