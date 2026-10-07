@@ -1,8 +1,9 @@
 mod common;
-use gpui_kit::test::{TestAppContextExt, TestSupportExt, TestWindowExt};
+use gpui_kit::test::{ClickOptions, TestAppContextExt, TestSupportExt, TestWindowExt};
 use gpui_kit::{
-    AppContext, Context, MouseButton, ScrollDelta, ScrollHandle, TestAppContext, Window, div,
-    point, prelude::*, px, size,
+    AppContext, Context, FocusHandle, InputEvent, Modifiers, ModifiersChangedEvent, MouseButton,
+    MouseDownEvent, ScrollDelta, ScrollHandle, TestAppContext, Window, div, point, prelude::*, px,
+    size,
 };
 use std::{cell::RefCell, rc::Rc, time::Duration};
 
@@ -106,6 +107,161 @@ fn hover_right_click_and_double_click_dispatch_native_pointer_events(cx: &mut Te
     assert!(events.iter().any(|event| event == "hover"));
     assert!(events.iter().any(|event| event == "right"));
     assert!(events.windows(2).any(|pair| pair == ["left:1", "left:2"]));
+}
+
+struct ModifiedClick {
+    focus: FocusHandle,
+    events: Rc<RefCell<Vec<(&'static str, Modifiers)>>>,
+}
+impl Render for ModifiedClick {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().id("panel").child({
+            let moved = self.events.clone();
+            let down = self.events.clone();
+            let up = self.events.clone();
+            let click = self.events.clone();
+            let changed = self.events.clone();
+            div()
+                .id("surface")
+                .test_support()
+                .track_focus(&self.focus)
+                .size(px(80.))
+                .on_modifiers_changed(move |event, _, _| {
+                    changed.borrow_mut().push(("modifiers", event.modifiers));
+                })
+                .on_mouse_move(move |event, _, _| {
+                    moved.borrow_mut().push(("move", event.modifiers))
+                })
+                .on_mouse_down(MouseButton::Left, move |event, _, _| {
+                    down.borrow_mut().push(("down", event.modifiers))
+                })
+                .on_mouse_up(MouseButton::Left, move |event, _, _| {
+                    up.borrow_mut().push(("up", event.modifiers))
+                })
+                .on_click(move |event, _, _| click.borrow_mut().push(("click", event.modifiers())))
+        })
+    }
+}
+#[gpui_kit::test]
+fn modified_clicks_carry_modifiers_on_every_pointer_event(cx: &mut TestAppContext) {
+    let events = Rc::new(RefCell::new(vec![]));
+    let (handle, view) = common::open_window(cx, None, |_, cx| {
+        cx.new(|cx| ModifiedClick {
+            focus: cx.focus_handle(),
+            events: events.clone(),
+        })
+    });
+    cx.update_window(handle.into(), |_, window, cx| {
+        let focus = view.read(cx).focus.clone();
+        window.focus(&focus, cx);
+        window.click_with_modifiers("surface", Modifiers::secondary_key(), cx);
+        assert_eq!(window.modifiers(), Modifiers::default());
+    })
+    .unwrap();
+    let recorded = std::mem::take(&mut *events.borrow_mut());
+    assert_eq!(
+        recorded.first(),
+        Some(&("modifiers", Modifiers::secondary_key()))
+    );
+    assert_eq!(recorded.last(), Some(&("modifiers", Modifiers::default())));
+    for kind in ["move", "down", "up", "click"] {
+        assert!(
+            recorded
+                .iter()
+                .any(|(event, modifiers)| *event == kind && modifiers.secondary()),
+            "{kind} did not carry the secondary modifier: {recorded:?}"
+        );
+    }
+
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.dispatch_event(
+            ModifiersChangedEvent {
+                modifiers: Modifiers::alt(),
+                capslock: window.capslock(),
+            }
+            .to_platform_input(),
+            cx,
+        );
+        window
+            .within("panel")
+            .click_with_modifiers("surface", Modifiers::shift(), cx);
+        assert_eq!(window.modifiers(), Modifiers::alt());
+    })
+    .unwrap();
+    let recorded = events.borrow();
+    assert!(
+        recorded
+            .iter()
+            .any(|(event, modifiers)| *event == "click" && *modifiers == Modifiers::shift()),
+        "scoped click did not carry shift: {recorded:?}"
+    );
+}
+
+struct ConfiguredClick {
+    down: Rc<RefCell<Vec<MouseDownEvent>>>,
+}
+impl Render for ConfiguredClick {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let down = self.down.clone();
+        div().id("panel").child(
+            div()
+                .id("surface")
+                .test_support()
+                .size(px(80.))
+                .on_mouse_down(MouseButton::Right, move |event, _, _| {
+                    down.borrow_mut().push(event.clone())
+                }),
+        )
+    }
+}
+#[gpui_kit::test]
+fn click_options_combine_offset_button_count_and_modifiers(cx: &mut TestAppContext) {
+    let down = Rc::new(RefCell::new(vec![]));
+    let (handle, _) = common::open_window(cx, None, |_, cx| {
+        cx.new(|_| ConfiguredClick { down: down.clone() })
+    });
+    let options = ClickOptions::new()
+        .with_offset(point(px(7.), px(11.)))
+        .with_button(MouseButton::Right)
+        .with_count(2)
+        .with_modifiers(Modifiers::shift());
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let position = window.find("surface").bounds().origin + options.offset().unwrap();
+        window.click_with_options("surface", options, cx);
+        window
+            .within("panel")
+            .click_with_options("surface", options, cx);
+        let events = down.borrow();
+        assert_eq!(events.len(), 4);
+        for (event, count) in events.iter().zip([1, 2, 1, 2]) {
+            assert_eq!(event.button, MouseButton::Right);
+            assert_eq!(event.click_count, count);
+            assert_eq!(event.position, position);
+            assert_eq!(event.modifiers, Modifiers::shift());
+        }
+        assert_eq!(window.modifiers(), Modifiers::default());
+    })
+    .unwrap();
+}
+
+#[test]
+fn test_click_options_builder() {
+    let defaults = ClickOptions::new();
+    assert_eq!(defaults.offset(), None);
+    assert_eq!(defaults.button(), MouseButton::Left);
+    assert_eq!(defaults.count(), 1);
+    assert_eq!(defaults.modifiers(), Modifiers::default());
+    let options = defaults
+        .with_offset(point(px(7.), px(11.)))
+        .with_button(MouseButton::Right)
+        .with_count(2)
+        .with_modifiers(Modifiers::shift());
+    assert_eq!(options.offset(), Some(point(px(7.), px(11.))));
+    assert_eq!(options.button(), MouseButton::Right);
+    assert_eq!(options.count(), 2);
+    assert_eq!(options.modifiers(), Modifiers::shift());
+    assert!(std::panic::catch_unwind(|| ClickOptions::new().with_count(0)).is_err());
 }
 
 struct Scrolling {

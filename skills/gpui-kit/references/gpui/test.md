@@ -169,21 +169,32 @@ fn saves_a_profile_through_the_ui(cx: &mut TestAppContext) {
 
 ## Queries and interactions
 
-Import `TestWindowExt` and, for custom registration, `TestSupportExt` from
-`gpui_kit::test`. Use normal Rust `assert!` and `assert_eq!` with snapshots.
+Import `TestWindowExt` for queries and interactions from `gpui_kit::test`.
+For custom registration, import `TestSupportExt`. Use normal Rust assertions with snapshots.
 
 | API | Behavior |
 | --- | --- |
 | `window.find(id)` | Requires a unique observed target; errors list registered paths. |
 | `window.try_find(id)` | Returns `None` when absent; ambiguous IDs still panic. |
+| `window.find_all(id)` | Returns all registered matches, including invisible ones, by current-frame bounds origin (y, then x); equal-origin order is unspecified. Empty when absent. |
 | `window.within(id)` | Resolves a native GPUI identity scope, including an unobserved ancestor. |
 | `click`, `right_click`, `double_click`, `hover` | Dispatch real pointer events at the target center. |
 | `click_at(id, offset, cx)` | Uses an offset from the target bounds' top-left corner. |
+| `window.click_with_modifiers(id, modifiers, cx)` | Centered left click with modifiers; sends modifier changes and restores the previous modifier state afterward. |
+| `window.click_with_options(id, options, cx)` | Combines offset, button, count, and modifiers using `ClickOptions`; restores the previous modifier state afterward. |
 | `scroll(id, delta, cx)` | Dispatches a GPUI `ScrollDelta` wheel event. |
 | `drag_to(from_id, to_id, cx)` | Drags between target centers within the current scope. |
 | `window.drag(from, to, cx)` | Drags between window-local points; use `bounds()` for precise or cross-scope geometry. |
 | `press(key, cx)` | Sends named GPUI keys such as `backspace`, `escape` or `secondary-a`. |
 | `input(text, cx)` | Types Unicode characters at current focus; click the input first. |
+
+`ClickOptions::new()` defaults to one left click at the center without modifiers.
+For example, `ClickOptions::new().with_offset(point(px(8.), px(8.)))
+.with_button(MouseButton::Right).with_count(2).with_modifiers(Modifiers::shift())`
+combines a local offset, right double-click, and Shift. Counts must be positive.
+Configurable clicks preserve caps lock. `find_all` ordering is geometry for the
+current frame, not stable identity, paint order, or business order; filter with
+`visible()` when counting visible matches.
 
 GPUI IDs need only be unique within their native scope. Use
 `window.within("dialog").find("name")` for repeated local IDs. Scoped windows

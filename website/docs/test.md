@@ -145,6 +145,8 @@ observation adds no layout container:
 | Dialog / Sheet | Host focus scope and surface bounds; child controls retain their own properties |
 | Menu | Item label and selection, menu focus scope and submenu bounds |
 | Notification | Alert role and bounds; close button uses normal Button observation |
+| Progress / ProgressCircle | Progress indicator role and label; numeric accessibility values are not exposed by `ElementSnapshot::value()` |
+| TitleBar | `title-bar` and `window-controls` bounds; caption buttons (`minimize`, `maximize` or `restore`, `close`) only where the title bar draws them |
 | Dock | Area/group/content bounds and focus scopes; tabs retain native selection |
 
 Use constructor IDs where available. Input and Select accept `.id("name")`;
@@ -220,14 +222,17 @@ IDs such as `("row", record_id)` preserve record identity after reordering.
 
 ## Interact and assert
 
-Import `gpui_kit::test::TestWindowExt` for the following methods:
+Import `gpui_kit::test::TestWindowExt` for queries and interactions:
 
 | API | Behavior |
 | --- | --- |
 | `window.find(id)` | Requires an `ElementSnapshot` from the last completed frame; missing targets panic with registered paths and troubleshooting hints. |
 | `window.try_find(id)` | Returns `None` when absent; ambiguity still panics. |
+| `window.find_all(id)` | Returns all registered matches, including invisible ones, by current-frame bounds origin (y, then x); equal-origin order is unspecified. Empty when absent. |
 | `window.click(id, cx)` | Native mouse move/down/up at the target center. |
 | `window.click_at(id, offset, cx)` | Click at a pixel offset from the target's top-left corner, useful for partial clipping. |
+| `window.click_with_modifiers(id, modifiers, cx)` | Centered left click with modifiers; sends modifier changes and restores the previous modifier state afterward. |
+| `window.click_with_options(id, options, cx)` | Combines offset, button, count, and modifiers using `ClickOptions`; restores the previous modifier state afterward. |
 | `window.right_click(id, cx)` / `double_click(id, cx)` | Native right-button or two-click sequences. |
 | `window.hover(id, cx)` | Move the pointer without pressing a button. |
 | `window.scroll(id, delta, cx)` | Native wheel event; `ScrollDelta` retains GPUI units and sign. |
@@ -236,8 +241,17 @@ Import `gpui_kit::test::TestWindowExt` for the following methods:
 | `window.press("backspace", cx)` | Native key-down/key-up for a named key or shortcut using GPUI's keystroke parser. |
 | `window.input(text, cx)` | Per-character text input to the current focus; does not focus or replace the whole value. |
 
-Scoped queries support `find`, `try_find`, nested `within`, `click`, `click_at`,
-`right_click`, `double_click`, `hover`, `scroll`, `drag_to`, `press` and `input`.
+`ClickOptions::new()` defaults to one left click at the center without modifiers.
+For example, `ClickOptions::new().with_offset(point(px(8.), px(8.)))
+.with_button(MouseButton::Right).with_count(2).with_modifiers(Modifiers::shift())`
+combines a local offset, right double-click, and Shift. Counts must be positive.
+Configurable clicks preserve caps lock. `find_all` ordering is geometry for the
+current frame, not stable identity, paint order, or business order; filter with
+`visible()` when counting visible matches.
+
+Scoped queries support `find`, `try_find`, `find_all`, nested `within`, `click`,
+`click_at`, `click_with_modifiers`, `click_with_options`, `right_click`, `double_click`, `hover`, `scroll`,
+`drag_to`, `press` and `input`.
 `drag_to` resolves both IDs within the scope. For cross-scope drags or custom offsets,
 query the targets and pass window-local points to `window.drag`.
 

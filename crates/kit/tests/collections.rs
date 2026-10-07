@@ -1,12 +1,14 @@
 mod common;
 use gpui_kit::component::{
-    list::ListItem,
+    IndexPath,
+    list::{List, ListDelegate, ListItem, ListState},
     table::{Column, DataTable, TableDelegate, TableSelection, TableState},
     tree::{Tree, TreeItem, TreeState},
 };
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{
-    App, AppContext, Context, Entity, Focusable, TestAppContext, Window, div, prelude::*, px, size,
+    App, AppContext, Context, Entity, Focusable, Modifiers, TestAppContext, Window, div,
+    prelude::*, px, size,
 };
 
 struct Files {
@@ -253,6 +255,63 @@ fn table_keyboard_leaves_rows_unselected_when_rows_are_not_selectable(cx: &mut T
             assert_eq!(window.find(("row", 0usize)).selected(), Some(false));
         }
         assert!(window.find(("row", 0usize)).visible());
+    })
+    .unwrap();
+}
+
+struct Choices {
+    confirmed: Vec<bool>,
+}
+impl ListDelegate for Choices {
+    type Item = ListItem;
+
+    fn items_count(&self, _: usize, _: &App) -> usize {
+        2
+    }
+
+    fn render_item(
+        &mut self,
+        ix: IndexPath,
+        _: &mut Window,
+        _: &mut Context<ListState<Self>>,
+    ) -> Option<Self::Item> {
+        Some(ListItem::new(("choice", ix.row)).child(format!("Choice {}", ix.row)))
+    }
+
+    fn set_selected_index(
+        &mut self,
+        _: Option<IndexPath>,
+        _: &mut Window,
+        _: &mut Context<ListState<Self>>,
+    ) {
+    }
+
+    fn confirm(&mut self, secondary: bool, _: &mut Window, _: &mut Context<ListState<Self>>) {
+        self.confirmed.push(secondary);
+    }
+}
+struct Picker {
+    list: Entity<ListState<Choices>>,
+}
+impl Render for Picker {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().size_full().child(List::new(&self.list))
+    }
+}
+#[gpui_kit::test]
+fn list_click_confirms_as_secondary_with_the_secondary_modifier(cx: &mut TestAppContext) {
+    cx.update(gpui_kit::init);
+    let (handle, picker) = common::open_window(cx, Some(size(px(320.), px(240.))), |window, cx| {
+        cx.new(|cx| Picker {
+            list: cx.new(|cx| ListState::new(Choices { confirmed: vec![] }, window, cx)),
+        })
+    });
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click(("choice", 0usize), cx);
+        window.click_with_modifiers(("choice", 1usize), Modifiers::secondary_key(), cx);
+        let list = picker.read(cx).list.clone();
+        assert_eq!(list.read(cx).delegate().confirmed, [false, true]);
     })
     .unwrap();
 }

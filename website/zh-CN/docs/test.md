@@ -117,6 +117,8 @@ cargo test -p gpui-kit --features test-support --test ui --locked
 | Dialog / Sheet | 宿主焦点作用域与内容表面边界；子控件保留各自属性 |
 | Menu | 菜单项名称与选中状态、菜单焦点作用域、子菜单边界 |
 | Notification | Alert 角色与边界；关闭按钮沿用 Button 观察 |
+| Progress / ProgressCircle | 进度指示器角色与名称；`ElementSnapshot::value()` 不读取数值型无障碍属性 |
+| TitleBar | `title-bar` 与 `window-controls` 边界；窗口控制按钮（`minimize`、`maximize` 或 `restore`、`close`）仅在标题栏自行绘制时可读 |
 | Dock | 区域、分组与内容边界及焦点作用域；Tab 保留原生选中状态 |
 
 优先使用构造函数 ID。Input 和 Select 支持 `.id("name")`，默认 ID 包含状态 entity ID。
@@ -182,14 +184,17 @@ assert!(save.visible());
 
 ## 操作与断言
 
-导入 `gpui_kit::test::TestWindowExt` 后使用以下方法：
+从 `gpui_kit::test` 导入 `TestWindowExt` 使用查询和交互方法：
 
 | API | 行为 |
 | --- | --- |
 | `window.find(id)` | 严格返回最近完成帧的 `ElementSnapshot`；缺失时 panic，列出注册路径与排查提示。 |
 | `window.try_find(id)` | 缺失时返回 `None`，歧义仍会 panic。 |
+| `window.find_all(id)` | 按当前帧边界原点的 y、x 排序，返回所有已注册匹配项，包括不可见元素；同坐标顺序不保证，缺失时返回空 `Vec`。 |
 | `window.click(id, cx)` | 在中心发送原生鼠标移动、按下与释放。 |
 | `window.click_at(id, offset, cx)` | 相对于目标左上角的像素偏移点击，适合部分裁剪。 |
+| `window.click_with_modifiers(id, modifiers, cx)` | 携带修饰键在中心左键点击；发送修饰键变化事件，结束后恢复之前的修饰键状态。 |
+| `window.click_with_options(id, options, cx)` | 用 `ClickOptions` 组合偏移、鼠标键、点击次数和修饰键；结束后恢复之前的修饰键状态。 |
 | `window.right_click(id, cx)` / `double_click(id, cx)` | 原生右键或两次点击序列。 |
 | `window.hover(id, cx)` | 移动指针，不按键。 |
 | `window.scroll(id, delta, cx)` | 原生滚轮事件，`ScrollDelta` 保留 GPUI 的方向与单位。 |
@@ -198,8 +203,15 @@ assert!(save.visible());
 | `window.press("backspace", cx)` | 使用 GPUI 按键解析器，为特殊键或快捷键发送原生 key-down/key-up 事件。 |
 | `window.input(text, cx)` | 向当前焦点逐字符输入，不自动聚焦或替换整个值。 |
 
-作用域支持 `find`、`try_find`、嵌套 `within`、`click`、`click_at`、`right_click`、
-`double_click`、`hover`、`scroll`、`drag_to`、`press` 和 `input`。
+`ClickOptions::new()` 默认在中心单击左键，不带修饰键。例如，
+`ClickOptions::new().with_offset(point(px(8.), px(8.)))
+.with_button(MouseButton::Right).with_count(2).with_modifiers(Modifiers::shift())`
+组合局部偏移、右键双击和 Shift。点击次数必须大于零，可配置点击保留 Caps Lock 状态。
+`find_all` 的顺序只表示当前帧几何位置，不表示稳定身份、绘制顺序或业务顺序；
+统计可见匹配项时，用 `visible()` 过滤。
+
+作用域支持 `find`、`try_find`、`find_all`、嵌套 `within`、`click`、`click_at`、
+`click_with_modifiers`、`click_with_options`、`right_click`、`double_click`、`hover`、`scroll`、`drag_to`、`press` 和 `input`。
 `drag_to` 的两个 ID 都在当前作用域中解析。跨作用域拖拽或指定偏移时，可查询目标后
 将窗口坐标传给 `window.drag`。
 

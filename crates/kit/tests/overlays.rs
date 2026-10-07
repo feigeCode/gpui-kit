@@ -146,6 +146,32 @@ async fn dialog_validates_scoped_input_saves_and_dismisses_notification(cx: &mut
 }
 
 #[gpui_kit::test]
+async fn find_all_counts_stacked_notifications(cx: &mut TestAppContext) {
+    cx.update(gpui_kit::init);
+    let (handle, _) = common::open_window(cx, Some(size(px(800.), px(700.))), |window, cx| {
+        cx.new(|cx| Workspace {
+            saved: cx.new(|cx| InputState::new(window, cx)),
+            draft: cx.new(|cx| InputState::new(window, cx)),
+        })
+    });
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click("notify", cx);
+        window.click("notify", cx);
+    })
+    .unwrap();
+    cx.wait_for(handle.into(), Duration::from_secs(1), |window, _| {
+        window.find_all("notification").len() == 2
+    })
+    .await;
+    cx.update_window(handle.into(), |_, window, _| {
+        let toasts = window.find_all("notification");
+        assert_ne!(toasts[0].path(), toasts[1].path());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 async fn escape_dismisses_dialog_and_sheet_and_restores_focus(cx: &mut TestAppContext) {
     cx.update(gpui_kit::init);
     let (handle, _) = common::open_window(cx, Some(size(px(800.), px(700.))), |window, cx| {

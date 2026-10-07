@@ -17,6 +17,7 @@ members = [
     "examples/hello_world",
     "examples/input",
     "examples/editor",
+    "examples/tig",
     "examples/brush",
     "examples/dock",
     "examples/html",
@@ -65,9 +66,17 @@ story = { path = "crates/story" }
 # the pins to caret requirements: downstream (navop) resolves gpui-pre through
 # a [patch] section pointing at fork tags (0.3.124 > 0.3.8), which an exact pin
 # would reject. Bump every snapshot crate together with its Cargo.lock entry.
+# Upstream's `script/check-gpui-pin.ts` (which fails CI on a non-exact pin) is
+# therefore not applicable to this fork's workspace dependencies.
 gpui = { package = "gpui-pre", version = "0.3.8" }
 gpui_platform = { package = "gpui-pre-platform", version = "0.3.8", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
 gpui_web = { package = "gpui-pre-web", version = "0.3.8" }
+# Fast is optional; existing crates select it through their gpui-fast feature.
+# Explicit package fields make Cargo use these dependency keys as Rust crate names;
+# the packages declare the same library names as the pre backend.
+gpui-fast = { package = "gpui-fast", version = "0.1.2", features = ["windows-manifest-provided-by-host"] }
+gpui-fast-platform = { package = "gpui-fast-platform", version = "0.1.2", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
+gpui-fast-web = { package = "gpui-fast-web", version = "0.1.2" }
 gpui_macros = { package = "gpui-pre-macros", version = "0.3.8" }
 reqwest_client = { package = "gpui-pre-reqwest-client", version = "0.3.8" }
 sum-tree = { package = "gpui-pre-sum-tree", version = "0.3.8" }
@@ -145,6 +154,9 @@ taffy = { opt-level = 3 }
 ttf-parser = { opt-level = 3 }
 smol = { opt-level = 3 }
 gpui-pre = { opt-level = 3 }
+gpui-fast = { opt-level = 3 }
+gpui-fast-platform = { opt-level = 3 }
+gpui-fast-macros = { opt-level = 3 }
 gpui-pre-platform = { opt-level = 3 }
 gpui-pre-macros = { opt-level = 3 }
 tree-sitter = { opt-level = 3 }
