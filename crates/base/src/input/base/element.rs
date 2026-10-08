@@ -307,7 +307,10 @@ pub(super) fn clamp_horizontal_scroll_offset(
     offset.clamp(min_offset, px(0.))
 }
 
-fn clamp_auto_grow_vertical_scroll_offset(
+/// Clamp the vertical scroll of an input whose wrapped content can be taller than
+/// its own viewport. Kept next to the layout that applies it because the gutter
+/// overlay has to resolve the same translation the text is laid out with.
+pub(super) fn clamp_auto_grow_vertical_scroll_offset(
     mode: &LayoutMode,
     scroll_top: Pixels,
     scroll_height: Pixels,
@@ -1558,11 +1561,9 @@ impl<M: InputModeKind> TextElement<M> {
             let line = &prepaint.last_layout.lines[line_index];
             let line_offset = prepaint.last_layout.visible_line_byte_offsets[line_index];
             let local_offset = widget.offset().saturating_sub(line_offset);
-            let Some(widget_point) = line.position_for_index(
-                local_offset,
-                &prepaint.last_layout,
-                false,
-            ) else {
+            let Some(widget_point) =
+                line.position_for_index(local_offset, &prepaint.last_layout, false)
+            else {
                 continue;
             };
             // `wrapped_lines` holds one shaped line per visual row, and the rows partition
@@ -5091,6 +5092,116 @@ mod tests {
 
         cx.simulate_mouse_down(bounds0.center(), MouseButton::Left, Modifiers::default());
         assert_eq!(events.borrow().as_slice(), &[(0, 0)]);
+    }
+
+    /// The lane overlay is laid out in content space, so it must carry the same
+    /// vertical scroll translation as the text element. Otherwise markers stay at
+    /// their unscrolled positions and a click on a row's text activates the marker
+    /// of a row that is one scroll distance away.
+    #[gpui::test]
+    fn gutter_lane_markers_follow_vertical_scroll(cx: &mut TestAppContext) {
+        use crate::input::{GutterLaneOptions, GutterMarker, InputEvent};
+        use gpui::Modifiers;
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        const LINES: usize = 60;
+        const LINE: &str = "alpha\n";
+        const SCROLL: f32 = 200.;
+
+        cx.update(crate::init);
+        let mut editor = None;
+        let window = cx.open_window(size(px(400.), px(600.)), |window, cx| {
+            let state = cx.new(|cx| {
+                EditorState::new(window, cx)
+                    .folding(true)
+                    .default_value(LINE.repeat(LINES))
+            });
+            editor = Some(state.clone());
+            DecorationHarness(state)
+        });
+        let editor = editor.unwrap();
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+
+        let events: Rc<RefCell<Vec<(usize, usize)>>> = Rc::new(RefCell::new(Vec::new()));
+        let events_for_sub = events.clone();
+        let _sub = cx.update(|_, cx| {
+            cx.subscribe(&editor, move |_, event: &InputEvent, _| {
+                if let InputEvent::GutterMarkerMouseDown {
+                    index, logical_row, ..
+                } = event
+                {
+                    events_for_sub.borrow_mut().push((*index, *logical_row));
+                }
+            })
+        });
+
+        let lane = cx.update(|_window, cx| {
+            editor.update(cx, |state, cx| {
+                state.create_gutter_lane(
+                    (0..LINES)
+                        .map(|row| GutterMarker::new(row, "dot"))
+                        .collect(),
+                    GutterLaneOptions::new(|_| div().size_full().into_any_element()),
+                    cx,
+                )
+            })
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+
+        // Scroll down: the text moves up and the markers must move with it.
+        cx.update(|window, cx| {
+            editor.update(cx, |state, cx| {
+                state.set_scroll_offset(point(px(0.), px(-SCROLL)), cx);
+            });
+            window.draw(cx).clear(cx);
+        });
+        // The element applies the offset while it paints and writes it back after,
+        // so the next frame is the one that has to line up.
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.update(|_, cx| {
+            assert_eq!(
+                editor.read(cx).scroll_offset().y,
+                px(-SCROLL),
+                "precondition: the viewport stays scrolled"
+            );
+        });
+
+        // Probe the row whose text is closest to the middle of the viewport. Both
+        // coordinates are read after the scroll, so a marker that did not move
+        // cannot satisfy the click below.
+        let viewport_middle = cx.update(|_, cx| editor.read(cx).input_bounds.center().y);
+        let (row, text_y) = cx.update(|_, cx| {
+            let state = editor.read(cx);
+            (0..LINES)
+                .filter(|row| lane.marker_bounds(*row, cx).is_some())
+                .filter_map(|row| {
+                    let start = row * LINE.len();
+                    state
+                        .range_to_bounds(&(start..start + 1))
+                        .map(|bounds| (row, bounds.center().y))
+                })
+                .min_by_key(|(_, y)| (f32::from(*y - viewport_middle).abs() * 100.) as i64)
+                .expect("a row in view")
+        });
+        let lane_x = cx
+            .update(|_, cx| lane.marker_bounds(row, cx))
+            .expect("the probed row keeps its marker")
+            .center()
+            .x;
+
+        cx.simulate_mouse_down(
+            point(lane_x, text_y),
+            MouseButton::Left,
+            Modifiers::default(),
+        );
+
+        assert_eq!(
+            events.borrow().as_slice(),
+            &[(row, row)],
+            "clicking the text of row {row} must activate row {row}'s marker, not the \
+             marker left at its unscrolled position"
+        );
     }
 
     #[gpui::test]

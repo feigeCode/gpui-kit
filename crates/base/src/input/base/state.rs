@@ -28,7 +28,7 @@ use super::{
     cursor::{CursorSelection, Selections},
     element::{
         EditorScrollbar, EditorScrollbarSnapshot, LongestLineKey, TextElement,
-        clamp_horizontal_scroll_offset,
+        clamp_auto_grow_vertical_scroll_offset, clamp_horizontal_scroll_offset,
     },
     kind::InputModeKind,
     mask_pattern::normalize_number_input,
@@ -4518,6 +4518,25 @@ impl<M: InputModeKind> Focusable for InputBaseState<M> {
 }
 
 impl<M: InputModeKind> InputBaseState<M> {
+    /// Vertical scroll translation the text element is laid out with this frame.
+    ///
+    /// `TextElement` places glyphs in content space and then moves its own origin
+    /// by the scroll offset, so anything positioned beside it in the same frame
+    /// needs the same translation. Resolved the way the element resolves it: a
+    /// pending deferred target wins over the persisted offset, and modes that
+    /// auto-grow never translate because their content does not scroll.
+    fn text_scroll_offset_y(&self) -> Pixels {
+        let offset = self
+            .deferred_scroll_offset
+            .unwrap_or_else(|| self.scroll_handle.offset());
+        clamp_auto_grow_vertical_scroll_offset(
+            &self.mode,
+            offset.y,
+            self.scroll_size.height,
+            self.input_bounds.size.height,
+        )
+    }
+
     /// Build the gutter lane overlay.
     ///
     /// Gutter markers must live in the element tree, not a `prepaint_as_root`
@@ -4547,7 +4566,11 @@ impl<M: InputModeKind> InputBaseState<M> {
         let mut overlay = div()
             .absolute()
             .left(self.editor_paddings.left)
-            .top(self.editor_paddings.top)
+            // `line_tops` below are content-space positions. Without the scroll
+            // translation the markers would keep their unscrolled tops, so while
+            // the viewport is scrolled every marker sits on a later row than the
+            // line it belongs to and clicks land on the wrong statement.
+            .top(self.editor_paddings.top + self.text_scroll_offset_y())
             .size_full();
 
         let mut lane_x = lane_start;
@@ -8503,9 +8526,7 @@ mod tests {
     }
 
     /// A slot that takes its height from the editor, the way a filter bar does.
-    fn auto_height_row(
-        editor: Entity<crate::input::EditorState>,
-    ) -> impl IntoElement {
+    fn auto_height_row(editor: Entity<crate::input::EditorState>) -> impl IntoElement {
         div().flex().flex_row().items_center().child(editor)
     }
 
@@ -8526,9 +8547,8 @@ mod tests {
                         .language("sql")
                         .rows(1)
                 }));
-                two_rows = Some(
-                    cx.new(|cx| crate::input::EditorState::new(window, cx).language("sql")),
-                );
+                two_rows =
+                    Some(cx.new(|cx| crate::input::EditorState::new(window, cx).language("sql")));
 
                 cx.new(|_| AutoHeightRowHeights {
                     one_row: one_row.clone().unwrap(),
@@ -8546,11 +8566,7 @@ mod tests {
             one_row.unwrap().read_with(&mut cx, |one, cx| {
                 (
                     one.last_bounds.expect("laid out").size.height,
-                    two_rows
-                        .read(cx)
-                        .last_bounds
-                        .expect("laid out")
-                        .size.height,
+                    two_rows.read(cx).last_bounds.expect("laid out").size.height,
                     one.line_height().expect("line height"),
                 )
             });
@@ -11134,9 +11150,7 @@ impl<M: crate::input::MultiLineMode> InputBaseState<M> {
                 *r = rows
             }
             LayoutMode::AutoGrow {
-                max_rows,
-                rows: r,
-                ..
+                max_rows, rows: r, ..
             } => {
                 *r = rows;
                 *max_rows = rows;
