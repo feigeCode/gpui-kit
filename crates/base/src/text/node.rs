@@ -249,14 +249,21 @@ impl Element for CustomBlockElement {
     }
 }
 
+/// A block is atomic: the selection takes it whole once it crosses the block's
+/// edge, and never from a gesture that stays inside it. A press and release
+/// within one block is a click on its content — often an interactive card —
+/// and the pointer commonly travels a few pixels during a quick click, so
+/// counting that travel as a drag would paint the whole block as selected.
 fn custom_block_is_selected(
     bounds: Bounds<Pixels>,
     start: Point<Pixels>,
     end: Point<Pixels>,
 ) -> bool {
+    let (start_inside, end_inside) = (bounds.contains(&start), bounds.contains(&end));
     start != end
-        && (bounds.contains(&start)
-            || bounds.contains(&end)
+        && !(start_inside && end_inside)
+        && (start_inside
+            || end_inside
             || point_in_text_selection(
                 bounds.origin,
                 bounds.size.width,
@@ -3480,6 +3487,31 @@ impl BlockNode {
         Self::render_wrap_table(table, &col_lens, options, node_cx, text_size, window, cx)
     }
 
+    /// Corner radii for the first and last table rows, derived from the
+    /// frame radius in `style.table()`.
+    ///
+    /// GPUI clips children with a rectangular content mask, so a square row
+    /// background (e.g. the header fill) pokes out of a rounded table frame
+    /// at the corners. Rounding the first row's top and the last row's
+    /// bottom corners to the frame radius — inset by the frame's 1px border
+    /// sitting between frame and rows — keeps the row fills inside the
+    /// frame. (A horizontally scrolled track can still meet the viewport
+    /// corner with a square edge mid-scroll; only a rounded content mask
+    /// could clip that, and gpui masks are rectangular.)
+    fn table_row_corner_radii(style: &TextViewStyle, window: &Window) -> [Option<Pixels>; 4] {
+        let rem_size = window.rem_size();
+        let inset = |radius: Option<gpui::AbsoluteLength>| {
+            radius.map(|radius| (radius.to_pixels(rem_size) - px(1.)).max(px(0.)))
+        };
+        let radii = &style.table().corner_radii;
+        [
+            inset(radii.top_left),
+            inset(radii.top_right),
+            inset(radii.bottom_left),
+            inset(radii.bottom_right),
+        ]
+    }
+
     /// Horizontally scrollable table layout (opt-in via `style.table`
     /// overflow-x: scroll).
     ///
@@ -3546,6 +3578,8 @@ impl BlockNode {
             .read(cx)
             .clone();
         let row_count = table.children.len();
+        let [top_left, top_right, bottom_left, bottom_right] =
+            Self::table_row_corner_radii(style, window);
         let mut rows = Vec::with_capacity(row_count);
         let mut cell_ordinal = 0;
         for (row_ix, row) in table.children.iter().enumerate() {
@@ -3596,7 +3630,13 @@ impl BlockNode {
                     .when(row_ix == 0, |this| {
                         this.bg(style.code_background())
                             .text_color(style.foreground())
+                            .when_some(top_left, |this, radius| this.rounded_tl(radius))
+                            .when_some(top_right, |this, radius| this.rounded_tr(radius))
                             .refine_style(&style.table_head())
+                    })
+                    .when(row_ix + 1 == row_count, |this| {
+                        this.when_some(bottom_left, |this, radius| this.rounded_bl(radius))
+                            .when_some(bottom_right, |this, radius| this.rounded_br(radius))
                     })
                     .children(cells),
             );
@@ -3664,6 +3704,8 @@ impl BlockNode {
 
         let style = &node_cx.style;
         let row_count = table.children.len();
+        let [top_left, top_right, bottom_left, bottom_right] =
+            Self::table_row_corner_radii(style, window);
         let mut rows = Vec::with_capacity(row_count);
         let mut cell_ordinal = 0;
         for (row_ix, row) in table.children.iter().enumerate() {
@@ -3711,7 +3753,13 @@ impl BlockNode {
                     .when(row_ix == 0, |this| {
                         this.bg(style.code_background())
                             .text_color(style.foreground())
+                            .when_some(top_left, |this, radius| this.rounded_tl(radius))
+                            .when_some(top_right, |this, radius| this.rounded_tr(radius))
                             .refine_style(&style.table_head())
+                    })
+                    .when(row_ix + 1 == row_count, |this| {
+                        this.when_some(bottom_left, |this, radius| this.rounded_bl(radius))
+                            .when_some(bottom_right, |this, radius| this.rounded_br(radius))
                     })
                     .children(cells),
             );
@@ -4060,16 +4108,23 @@ mod tests {
         let inside = bounds.center();
         let above = gpui::point(px(0.), px(0.));
         let below = gpui::point(px(0.), px(80.));
-        for (start, end) in [
-            (above, inside),
-            (inside, below),
-            (above, below),
-            (inside, inside + gpui::point(px(1.), px(0.))),
-        ] {
+        for (start, end) in [(above, inside), (inside, below), (above, below)] {
             assert!(custom_block_is_selected(bounds, start, end));
             assert!(custom_block_is_selected(bounds, end, start));
         }
         assert!(!custom_block_is_selected(bounds, inside, inside));
+        // Pointer travel during a click, and any drag that never leaves the
+        // block, select nothing.
+        for (start, end) in [
+            (inside, inside + gpui::point(px(1.), px(0.))),
+            (
+                bounds.origin,
+                bounds.bottom_right() - gpui::point(px(1.), px(1.)),
+            ),
+        ] {
+            assert!(!custom_block_is_selected(bounds, start, end));
+            assert!(!custom_block_is_selected(bounds, end, start));
+        }
         assert!(!custom_block_is_selected(
             bounds,
             gpui::point(px(150.), px(30.)),
