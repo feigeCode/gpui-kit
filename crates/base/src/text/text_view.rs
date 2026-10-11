@@ -672,6 +672,15 @@ impl Element for TextView {
         });
 
         state.update(cx, |state, cx| {
+            if text_view_style.is_some()
+                || match (&state.code_block_highlighter, &code_block_highlighter) {
+                    (Some(previous), Some(next)) => !Arc::ptr_eq(previous, next),
+                    (None, None) => false,
+                    _ => true,
+                }
+            {
+                state.preserve_selection_for_reflow();
+            }
             state.code_block_actions = self.code_block_actions.clone();
             state.code_block_highlighter = code_block_highlighter;
             state.table_actions = self.table_actions.clone();
@@ -686,7 +695,6 @@ impl Element for TextView {
             state.scrollable = self.scrollable;
             state.max_lines = max_lines;
             if let Some(text_view_style) = text_view_style {
-                state.selection_revision = state.selection_revision.wrapping_add(1);
                 state.text_view_style = text_view_style;
             }
 
@@ -758,13 +766,11 @@ impl Element for TextView {
             }
             // Descendant `Inline`s report their line spans through the state
             // stack during prepaint (in addition to the paint-time push below).
-            GlobalState::global_mut(cx)
-                .text_view_state_stack
-                .push(state.clone());
+            GlobalState::global(cx).push_text_view_state(state.clone());
         }
         request_layout.element.prepaint(window, cx);
         if max_lines_active {
-            GlobalState::global_mut(cx).text_view_state_stack.pop();
+            GlobalState::global(cx).pop_text_view_state();
         }
 
         let mut clip_bottom = None;
@@ -826,12 +832,10 @@ impl Element for TextView {
     ) {
         let state = &request_layout.state;
         if self.selectable {
-            state.update(cx, |state, _| state.selection_adapter.begin_frame());
+            state.read(cx).selection_adapter.begin_frame();
         }
 
-        GlobalState::global_mut(cx)
-            .text_view_state_stack
-            .push(state.clone());
+        GlobalState::global(cx).push_text_view_state(state.clone());
         if let Some(clip_bottom) = prepaint.clip_bottom {
             // Snap the `max_lines` clip to the last whole line that fits, so a
             // line of glyphs is never cut in half.
@@ -844,7 +848,7 @@ impl Element for TextView {
         } else {
             request_layout.element.paint(window, cx);
         }
-        GlobalState::global_mut(cx).text_view_state_stack.pop();
+        GlobalState::global(cx).pop_text_view_state();
 
         // Every list has scrolled by now, so the line of a reveal is where
         // it ends up this frame.
@@ -876,7 +880,7 @@ impl Element for TextView {
                     state.text_view_style.selection().alpha(1.),
                 )
             };
-            let document_order = GlobalState::global_mut(cx).next_selection_document_order();
+            let document_order = GlobalState::global(cx).next_selection_document_order();
             adapter.register(
                 prepaint.hitbox.clone(),
                 content_bounds,
