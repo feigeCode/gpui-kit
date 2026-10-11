@@ -13,4 +13,4 @@ gpui-fps.workspace = true
 workspace = true
 
 [features]
-gpui-fast = ["gpui-fps/gpui-fast"]
+gpui-fast = ["gpui-fps/gpui-fast", "gpui-kit/gpui-fast"]
