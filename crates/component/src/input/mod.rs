@@ -33,11 +33,12 @@ pub use gpui_base::input::{
     InputState, Lsp, MaskPattern, MoveDown, MoveEnd, MoveHome, MoveLeft, MovePageDown,
     MovePageUp, MoveRight, MoveToEnd, MoveToEndOfLine, MoveToNextWord, MoveToPreviousWord,
     MoveToStart, MoveToStartOfLine, MoveUp, Outdent, OutdentInline, Paste, Point,
-    RangeDecoration, RangeDecorationCollection, RangeDecorationStyle, Redo, Replace, Rope,
-    RopeExt, RopeLines, Search, SelectAll, SelectToEnd, SelectToEndOfLine, SelectToNextWordEnd,
-    SelectToPreviousWordStart, SelectToStart, SelectToStartOfLine, Selection,
-    ShowCharacterPalette, ShowCompletions, ShowDocumentHandler, TabSize, TextDecoration,
-    TextDecorationCollection, TextareaState, ToggleCodeActions, Undo, WrappingIndent,
+    PrepaintCaretGeometry, RangeDecoration, RangeDecorationCollection, RangeDecorationStyle,
+    Redo, Replace, Rope, RopeExt, RopeLines, Search, SelectAll, SelectToEnd, SelectToEndOfLine,
+    SelectToNextWordEnd, SelectToPreviousWordStart, SelectToStart, SelectToStartOfLine,
+    Selection, ShowCharacterPalette, ShowCompletions, ShowDocumentHandler, TabSize,
+    TextDecoration, TextDecorationCollection, TextareaState, ToggleCodeActions, Undo,
+    WrappingIndent,
 };
 pub use gpui_base::input::{EditorMode, InputMode, InputModeKind, TextareaMode};
 #[doc(hidden)]
