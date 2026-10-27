@@ -9005,8 +9005,20 @@ impl ShellRuntime {
                 Some(ComponentArgument::Element(*id))
             }
             // A `gpui-base` state and a registered one can share a kind name —
-            // `InputState` is both — and a handle into one table, read from the
-            // other, would bind the control to some unrelated state.
+            // `InputState` is both. navop keeps script state in `gpui-base` and
+            // builds elements from `gpui-component`, and the handle bridge
+            // (`with_base_entity_state`) materializes exactly that pairing, so a
+            // base handle of the required kind has to be accepted here. Upstream
+            // #3505 refuses it outright; the diagnostic below therefore only fires
+            // for a handle that is not a base entity of this kind either.
+            (ArgumentSchema::Entity(kind), Argument::Entity(handle))
+                if self.entities.borrow().kind(*handle) == Some(*kind) =>
+            {
+                Some(ComponentArgument::Entity {
+                    kind,
+                    handle: *handle,
+                })
+            }
             (ArgumentSchema::Entity(kind), Argument::Entity(_))
                 if self.components.states().any(|state| state.kind() == *kind) =>
             {
@@ -9018,14 +9030,6 @@ impl ShellRuntime {
                         module = self.components.module_specifier().unwrap_or_default(),
                     ),
                 ));
-            }
-            (ArgumentSchema::Entity(kind), Argument::Entity(handle))
-                if self.entities.borrow().kind(*handle) == Some(*kind) =>
-            {
-                Some(ComponentArgument::Entity {
-                    kind,
-                    handle: *handle,
-                })
             }
             (ArgumentSchema::Entity(kind), Argument::RetainedState { handle, proof }) => {
                 let matches = if proof != &self.component_state_proof {

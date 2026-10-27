@@ -499,11 +499,14 @@ export default class Form extends View {
         snapshot_text(&mut context, &view).contains("refused: unknown input event `press_enter`"),
         "an unknown event must name the valid ones"
     );
-    // A base state shares the kind name and could share the handle number,
-    // so it is refused by name rather than resolved in the wrong table.
+    // FORK: upstream #3505 refuses a `gpui-base` handle here because the two
+    // tables could disagree about what handle 0 means. navop's extension scripts
+    // keep their state in `gpui-base` and their elements in `gpui-component`, so
+    // the fork accepts a base handle of the required kind instead (see
+    // `validate_component_argument_kind`); the diagnostic only fires for a handle
+    // that is not a base entity of that kind either.
     assert!(
-        snapshot_text(&mut context, &view)
-            .contains("mixed: Input(state) expects the InputState from"),
+        snapshot_text(&mut context, &view).contains("mixed: accepted"),
         "{}",
         snapshot_text(&mut context, &view)
     );
