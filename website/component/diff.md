@@ -22,7 +22,7 @@ use gpui_kit::*;
 use gpui_kit::component::diff::{
     Diff, DiffAnnotation, DiffChangeIndicator, DiffConflictResolution, DiffFile, DiffHoverHighlight,
     DiffHunkSeparator, DiffInlineUnit, DiffLinePosition, DiffLineRange, DiffMode,
-    DiffSide, DiffState,
+    DiffParseOptions, DiffSide, DiffState,
 };
 ```
 
@@ -89,6 +89,29 @@ changes. A file without source rows, such as a binary file, a mode change or a
 pure rename, shows a summary below its header. Malformed hunks and unsupported
 combined diffs return a `DiffParseError`; its `line()` and `message()` identify
 the patch location and reason.
+
+A patch cut at a size limit usually ends inside a hunk. `DiffFile::parse_with`
+accepts the relaxations a `DiffParseOptions` enables; `DiffFile::parse` stays
+strict:
+
+```rust
+let options = DiffParseOptions::new().truncated_hunks(true);
+let files = DiffFile::parse_with(patch, options)?;
+let cut = files.iter().any(DiffFile::is_truncated);
+```
+
+With `truncated_hunks(true)`, a hunk may end before its declared line counts,
+and its counts come from the lines present. An empty line inside such a hunk is
+an empty context line. Declared counts still bound each hunk, and malformed
+headers, invalid paths and unordered hunks are still errors. `is_truncated()`
+reports a file with such a hunk. Remove any marker the application appends to a
+cut patch before parsing it.
+
+In a multi-file unified diff without `diff --git` separators, a paired `---`
+and `+++` header ends a short hunk. These prefixes can also be source text:
+when that interpretation completes the declared hunk, it takes precedence.
+Hunk positions must stay ordered on both sides even when a short hunk supplies
+no lines.
 
 Two constructors cover files that are not part of a patch. Both show one column
 in every display mode:
@@ -284,8 +307,26 @@ Diff::new(&self.diff)
 Syntax language is detected from each file's path; `DiffFile::with_language`
 overrides it with a highlighter language name such as `rust`. Enable the
 matching Cargo grammar feature, such as `tree-sitter-rust`, or use
-`tree-sitter-languages` for all built-in grammars. Without a grammar, supplied
-code still renders with line change colors.
+`tree-sitter-languages` for all built-in grammars, or the lighter `syntect`
+feature described in [Editor](editor.md). Without a grammar, supplied code still
+renders with line change colors.
+
+An application that highlights code itself can color the diff the same way with
+`with_syntax_highlighter`, which needs no grammar feature. The function receives
+the file's language and the text of one side of one hunk, and returns byte ranges
+into that text with their styles; a range that splits a character is ignored:
+
+```rust
+let state = cx.new(|cx| {
+    DiffState::new(files, cx).with_syntax_highlighter(|language, text| {
+        my_highlighter::highlight(language, text)
+    })
+});
+```
+
+It runs on the same background thread, one hunk side at a time. Its styles are
+kept as returned, so call `set_syntax_highlighter` with a new function when its
+colors change, or `clear_syntax_highlighter` to return to the built-in highlighter.
 
 Changed lines paired across the two sides also emphasize the words that differ.
 `with_inline_unit(Some(DiffInlineUnit::Character))` compares characters instead,

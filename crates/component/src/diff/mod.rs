@@ -12,7 +12,7 @@ mod state;
 
 pub use conflict::{DiffConflict, DiffConflictResolution};
 pub use document::{DiffFile, DiffFileStatus, DiffLinePosition, DiffLineRange, DiffSide};
-pub use parser::DiffParseError;
+pub use parser::{DiffParseError, DiffParseOptions};
 pub use presentation::DiffInlineUnit;
 pub use state::{DiffEvent, DiffState};
 
@@ -73,8 +73,24 @@ pub(crate) fn init(cx: &mut App) {
         KeyBinding::new("end", Last, Some("Diff")),
         KeyBinding::new("shift-up", ExtendUp, Some("Diff")),
         KeyBinding::new("shift-down", ExtendDown, Some("Diff")),
-        KeyBinding::new("secondary-c", Copy, Some("Diff")),
-        KeyBinding::new("secondary-a", SelectAll, Some("Diff")),
+        KeyBinding::new(
+            if cx.platform_info().is_mac() {
+                "cmd-c"
+            } else {
+                "ctrl-c"
+            },
+            Copy,
+            Some("Diff"),
+        ),
+        KeyBinding::new(
+            if cx.platform_info().is_mac() {
+                "cmd-a"
+            } else {
+                "ctrl-a"
+            },
+            SelectAll,
+            Some("Diff"),
+        ),
     ]);
 }
 
@@ -554,7 +570,9 @@ fn render_diff(
                 // single-axis wheel remapping. The sibling mask owns X input.
                 .when(!soft_wrap, |this| this.overflow_x_hidden())
                 .track_scroll(&horizontal)
-                .child(
+                .child(gpui_base::ScrollBounce::new(
+                    "diff-bounce",
+                    &scrollbar,
                     list(scrollbar.clone(), move |ix, window, cx| {
                         let row = &rows[ix];
                         div()
@@ -565,7 +583,7 @@ fn render_diff(
                     })
                     .w(content_width)
                     .h_full(),
-                )
+                ))
                 .into_any_element(),
             scrollbar.clone(),
             horizontal.clone(),
@@ -686,6 +704,9 @@ fn render_diff(
                     let state = cx.entity();
                     move |bounds, _, cx| {
                         state.update(cx, |state, cx| {
+                            // Runs after the list's prepaint, which drops
+                            // every row height when its width changes.
+                            let rehinted = state.keep_row_height_hint();
                             // The estimate shapes the widest candidates only;
                             // grow to fit any wider line once it is painted.
                             let painted = if soft_wrap {
@@ -694,7 +715,7 @@ fn render_diff(
                                 let painted = state.geometry().borrow().painted_width();
                                 code_width(painted, gutter_width, rem, mode)
                             };
-                            if state.record_paint(bounds.size, painted) {
+                            if state.record_paint(bounds.size, painted) || rehinted {
                                 cx.notify();
                             }
                         });
@@ -1853,6 +1874,8 @@ mod header_tests;
 mod newline_tests;
 #[cfg(test)]
 mod review_tests;
+#[cfg(test)]
+mod scroll_tests;
 #[cfg(test)]
 mod selection_tests;
 #[cfg(test)]
