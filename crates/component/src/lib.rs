@@ -13,7 +13,9 @@ mod index_path;
 #[cfg(any(feature = "inspector", debug_assertions))]
 mod inspector;
 mod root;
-pub use root::{render_dialog_layer, render_notification_layer, render_sheet_layer};
+pub use root::{
+    active_dialog_count, render_dialog_layer, render_notification_layer, render_sheet_layer,
+};
 mod sizing;
 mod styled;
 mod time;
@@ -99,12 +101,12 @@ pub mod tree;
 pub use crate::Disableable;
 pub use element_ext::*;
 pub use global_state::GlobalState;
-pub use gpui_base::{DialogStateChanged, Root};
 pub use gpui_base::animation;
 pub use gpui_base::{
     AxisExt, Edges, FocusTrapElement, InteractiveElementExt, LengthExt, Measure, OngoingScrollExt,
     Placement, Side, measure, measure_if,
 };
+pub use gpui_base::{DialogStateChanged, Root};
 pub use gpui_component_macros::icon_named;
 pub use icon::*;
 pub use index_path::IndexPath;

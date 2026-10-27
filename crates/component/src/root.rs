@@ -800,6 +800,16 @@ pub fn render_sheet_layer(window: &mut Window, cx: &mut App) -> Option<impl Into
     WindowState::sheet_layer(root, window, cx)
 }
 
+/// Query-only counterpart of the layer renderers above: how many dialogs are
+/// currently active (including ones animating out). Rendering the dialog layer
+/// is only legal during prepaint/paint, so hosts and tests that merely want to
+/// assert dialog state should read this instead.
+pub fn active_dialog_count(window: &Window, cx: &App) -> usize {
+    WindowState::try_read(window, cx)
+        .map(|state| state.active_dialogs.len())
+        .unwrap_or(0)
+}
+
 pub fn render_dialog_layer(window: &mut Window, cx: &mut App) -> Option<impl IntoElement + use<>> {
     let root = WindowState::entity(window, cx)?;
     WindowState::dialog_layer(&root, window, cx)
