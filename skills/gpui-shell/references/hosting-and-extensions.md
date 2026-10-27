@@ -10,13 +10,13 @@ The catalog is frozen data owned by the runtime. These steps are independent:
 | Host | Initialize on the GPUI app thread | Construct runtime |
 | --- | --- | --- |
 | Base only | `gpui_shell::init(cx)` | `ShellRuntime::new(cx)` or deliberately `new_isolated()` |
-| Styled adapter | `gpui_component_shell::init(cx)` | `ShellRuntime::new_with_components(cx, gpui_component_shell::components()?)` or `gpui_component_shell::new_isolated_runtime()` |
+| Styled catalog (`components` feature) | `gpui_shell::components::init(cx)` | `ShellRuntime::new_with_components(cx, gpui_shell::components::components()?)` or `gpui_shell::components::new_isolated_runtime()` |
 | Generic catalog host | `gpui_shell::init_with_components(cx, &catalog)` | Pass that catalog to the appropriate `*_with_components` constructor |
 
 `init` alone does not inject descriptors into a subsequently created bare
 runtime. `components()` builds and freezes the adapter catalog, including its
 initializer and window opener. The adapter's `register` function is private;
-do not publish a recipe calling `gpui_component_shell::register`.
+do not publish a recipe calling `gpui_shell::components::register`.
 
 `ShellRuntime` is `Rc`-owned and belongs to the GPUI/UI thread; do not put it in a
 worker thread or invent an `Arc<Mutex<_>>` workaround. `new(cx)` installs one
@@ -33,7 +33,7 @@ Three public routes serve different needs:
   error-surface variant. See the Rust Shell story.
 - `load_application(&path, entry)` then `mount_application(&loaded, window, cx)`
   gives an embedded `Entity<ScriptView>`. See
-  `crates/component-shell/tests/public_host.rs`. A loaded
+  `crates/shell/tests/integration/public_host.rs`. A loaded
   handle belongs to its originating runtime and is **single mount**, including
   a failed attempt. **This uses the default policy**, not independent plugin
   grants, and is not a complete window/overlay setup.
@@ -165,7 +165,7 @@ in `crates/shell/src/tests/render.rs`.
 
 Use this seam for a descriptor-defined constructor/method/schema/type surface,
 rather than one opaque host-owned element. Start with
-`crates/component-shell/src/shell/spinner.rs`; then follow the nearest retained,
+`crates/shell/src/components/shell/spinner.rs`; then follow the nearest retained,
 structured-child or deferred-slot binding rather than treating every component
 as a leaf.
 
@@ -176,7 +176,7 @@ as a leaf.
 3. Implement `ComponentMaterializer` with the real component. Apply only the
    supported styles and methods; preserve child order and state ownership.
    Unsupported fluent calls must fail, not silently become no-ops.
-4. Register in `crates/component-shell/src/shell/mod.rs`, then freeze.
+4. Register in `crates/shell/src/components/shell/mod.rs`, then freeze.
    `COMPONENT_REGISTRY_API_VERSION` and registry validation are real contracts.
    Put concrete `gpui-component` imports in the adapter, never in `gpui-shell`.
 5. If the catalog requires app globals or a special window root, carry the

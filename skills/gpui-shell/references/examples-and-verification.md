@@ -15,9 +15,9 @@ Use a temporary app directory for a smoke test of new documentation snippets.
 | `examples/js_story/main.js`, `app.js`, `stories/registered.js` | Catalog-backed construction and host selection | That a gallery inventory proves every interaction works |
 | `examples/js_story/stories/virtual_list.js`, `stories/dock.js` | Visible-range construction, stable keys, matching scrollbar ID, retained dock state | That old design prose saying Dock is unavailable is current |
 | `crates/story/src/stories/shell_story.rs`, `crates/story/js/quotes/` | Real Rust+JS embedding, shared model, `market` HostModule, async split, refresh vs repaint, watch | That standalone shell CLI provides the private `market` module |
-| `crates/component-shell/src/lib.rs` | Catalog assembly, init, component window root and overlay layers | That `init` alone injects bindings or `Root` draws all layers |
-| `crates/component-shell/tests/public_host.rs` | Public load/mount boundary, errors, same-runtime and single-mount constraints | That directly drawing a ScriptView tests window overlays |
-| `crates/component-shell/tests/structured_host.rs`, `tests/types/` | Structured children, positive/negative type contracts and runtime rejection | That type success proves deferred rendering or paint |
+| `crates/shell/src/components/mod.rs` | Catalog assembly, init, component window root and overlay layers | That `init` alone injects bindings or `Root` draws all layers |
+| `crates/shell/tests/integration/public_host.rs` | Public load/mount boundary, errors, same-runtime and single-mount constraints | That directly drawing a ScriptView tests window overlays |
+| `crates/shell/tests/integration/structured_host.rs`, `tests/types/` | Structured children, positive/negative type contracts and runtime rejection | That type success proves deferred rendering or paint |
 | `crates/shell/src/tests/render.rs` (`component_*`, `revoking_a_component_module_*`) | `HostModule::component`, explicit string ID, props, materialized children and factory revocation | That native elements always require a full catalog descriptor |
 | `crates/shell/src/tests/host_api.rs`, `src/plugin.rs`, `src/watch.rs` | Host-call/async contract, policy and reload lifetime tests | That default registry grants isolate multiple plugins |
 
@@ -30,9 +30,9 @@ cargo run --locked -p gpui-shell -- types examples/js_todolist
 cargo run --locked -p gpui-shell -- check examples/js_todolist
 
 # Styled catalog: use the adapter executable for all three operations.
-cargo run --locked -p gpui-component-shell --bin gpui-component-shell -- examples/js_story
-cargo run --locked -p gpui-component-shell --bin gpui-component-shell -- types examples/js_story
-cargo run --locked -p gpui-component-shell --bin gpui-component-shell -- check examples/js_story
+cargo run --locked -p gpui-shell --bin gpui-shell -- examples/js_story
+cargo run --locked -p gpui-shell --bin gpui-shell -- types examples/js_story
+cargo run --locked -p gpui-shell --bin gpui-shell -- check examples/js_story
 ```
 
 Using the bare host against `import ... from "gpui-component"` is not an
@@ -51,8 +51,8 @@ inventing ambient declarations for functionality the running host lacks.
 3. **Compiled contracts:** use the narrowest relevant test first:
 
    ```sh
-   cargo test --locked -p gpui-component-shell --test public_host
-   cargo test --locked -p gpui-component-shell --test structured_host
+   cargo test --locked -p gpui-shell --test integration public_host
+   cargo test --locked -p gpui-shell --test integration structured_host
    cargo test --locked -p gpui-shell --lib typings
    cargo test --locked -p gpui-shell --lib tests::render
    ```
@@ -61,8 +61,8 @@ inventing ambient declarations for functionality the running host lacks.
 
    ```sh
    node examples/js_story/fixtures/verify-coverage.mjs
-   npm --prefix crates/component-shell/tests/types ci
-   npm --prefix crates/component-shell/tests/types test
+   npm --prefix crates/shell/tests/types ci
+   npm --prefix crates/shell/tests/types test
    # Aggregate Rust/render/adapter/type contracts; potentially expensive.
    script/check-ai shell
    ```

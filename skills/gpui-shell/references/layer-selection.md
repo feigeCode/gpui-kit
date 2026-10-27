@@ -10,14 +10,14 @@ embedding application's pinned revision before applying this checkout's API.
 | `gpui-base` | Unstyled interaction/state primitives; presentation belongs to the caller | Built-in `gpui-base`: layout helpers, editable state and base elements |
 | `gpui-component` | Ready-styled native components built on base behavior | `gpui-component`, **only when the host supplies its adapter catalog** |
 | `gpui-shell` | JS execution, `View`/contexts, base bindings, policies, host modules, loading and registry protocol | `gpui-kit` (also `gpui` compatibility alias), `gpui-base`, and other supported runtime modules |
-| `gpui-component-shell` | Registers typed component constructors and native materializers into Shell; provides a component-aware host/CLI | Registers `gpui-component`; not a JS import named `gpui-component-shell` |
+| `gpui-shell` + `components` | Registers typed component constructors and native materializers into Shell; provides a component-aware host/CLI | A separate crate or JS module named `gpui-component-shell` |
 
 The dependency relationships are:
 
 ```text
 gpui-component       -> gpui-base
 gpui-shell           -> gpui-base
-gpui-component-shell -> gpui-shell + gpui-component
+gpui-shell [components] -> gpui-component
 application host     -> runtime + chosen catalog + application HostModules
 ```
 
@@ -32,7 +32,7 @@ does not replace the runtime or create another permissions system.
 | Native Rust app with standard themed controls, no scripts | `gpui-component` / app facade; no Shell adapter needed |
 | Native Rust custom design system or low-level interaction implementation | `gpui-base`; supply presentation and follow its state/focus contract |
 | Script UI using only layout, text and intentionally custom/base elements | `gpui-shell` host + imports from `gpui-kit` and `gpui-base` |
-| Script UI using ready-styled buttons, inputs, selectors, tables or dock bindings | Host adds `gpui-component-shell`; script imports **bound** controls from `gpui-component` |
+| Script UI using ready-styled buttons, inputs, selectors, tables or dock bindings | Host enables `gpui-shell`'s `components` feature; script imports **bound** controls from `gpui-component` |
 | Styled script form with custom layout or editable text state | **Mix** base layout/state with styled component elements |
 | Expose an application operation to a script | An approved `HostModule`; not a new visual adapter or a provider UI protocol |
 
@@ -71,7 +71,7 @@ export default class Form extends View {
 ```
 
 This is the base-state → styled-element bridge exercised by
-`crates/component-shell/tests/base_state_bridge_render_test.rs`,
+`crates/shell/tests/integration/base_state_bridge_render_test.rs`,
 `component_input_materializes_from_a_gpui_base_state`.
 It is a runtime-bridge example, **not a claim that the currently checked-in
 declarations accept it**: the 2026-09-16 documentation audit ran strict JS
@@ -100,13 +100,13 @@ Do **not** generalize this to “all state lives only in gpui-base”:
 
 - `crates/base/src/lib.rs`, `crates/base/src/input/input/mod.rs`:
   unstyled ownership and `InputState`-based input.
-- `crates/component-shell/src/lib.rs`: `components()`, `init()`,
+- `crates/shell/src/components/mod.rs`: `components()`, `init()`,
   `new_isolated_runtime()` and component-aware window opener.
 - `crates/shell/src/component_registry.rs`: default module name and reserved
   runtime modules; a catalog must not shadow `gpui-base` or `gpui-kit`.
 - `examples/js_story/app.js`: base `Input` + base `InputState` for search;
   `README.md` explains editable state and generating declarations.
-- `crates/component-shell/tests/base_state_bridge_render_test.rs`: minimal
+- `crates/shell/tests/integration/base_state_bridge_render_test.rs`: minimal
   mixed-input regression, including native materialization error assertions.
 - `examples/js_todolist`: state/events/async lifecycle; not a template for an
   embedding application's manifest or permission grants.
