@@ -1,6 +1,6 @@
 ---
 name: gpui-shell
-description: 'Build and debug JavaScript extensions hosted by GPUI Shell. Use for gpui-base vs gpui-component-shell layer selection, gpui-shell runtime vs component adapter, embedded ScriptView and ShellRoot, HostModule Rust APIs, per-plugin Policy and capabilities, PluginManager lifecycle, ComponentRegistry adapters, gpui-shell.json, generated JavaScript typings, hot reload, or the js_todolist and js_story examples. Not a system terminal shell, a Node/browser runtime, or a WASM/IPC driver extension mechanism.'
+description: 'Build and debug JavaScript extensions hosted by GPUI Shell. Use for gpui-base vs gpui-component layer selection, gpui-shell runtime vs its components feature, embedded ScriptView and ShellRoot, HostModule Rust APIs, per-plugin Policy and capabilities, PluginManager lifecycle, ComponentRegistry adapters, gpui-shell.json, generated JavaScript typings, hot reload, or the js_todolist and js_story examples. Not a system terminal shell, a Node/browser runtime, or a WASM/IPC driver extension mechanism.'
 ---
 
 # GPUI Shell Extensions
@@ -22,20 +22,22 @@ features or screens.
 | --- | --- | --- |
 | `gpui-base` (`crates/base`) | Unstyled behavior, retained state, layout primitives; exposed to scripts through the runtime's built-in `gpui-base` module | A JS runtime, styled component catalog or plugin manager |
 | `gpui-component` (`crates/component`) | Styled Rust components built on the base layer | Automatic availability in JavaScript |
-| `gpui-shell` (`crates/shell`) | JavaScript engine, script views, contexts, policies, host modules, component-registry protocol, generated types, loader/watcher, base CLI | The styled `gpui-component` catalog |
-| `gpui-component-shell` (`crates/component-shell`) | Concrete component descriptors/materializers, catalog initialization, component-aware window opener, CLI with this catalog | A second JS engine or an alternative plugin security model |
+| `gpui-shell` (`crates/shell`) | JavaScript engine, script views, contexts, policies, host modules, component-registry protocol, generated types, loader/watcher, CLI — plus, behind its `components` feature, the concrete component descriptors/materializers, catalog initialization and the component-aware window opener | A second JS engine or an alternative plugin security model |
 | Application host | Approved capabilities/modules, state, plugin lifetime, mounting and product contributions | Automatic approval of every manifest request |
 
-Dependency direction: `gpui-component-shell` depends on both `gpui-shell` and
-`gpui-component`; the runtime must not depend back on the adapter. Ordinary
-Rust applications can use the `gpui-kit` facade, but Shell hosting needs separate
-dependencies. Do not assume `gpui_kit::shell` exists.
+Dependency direction: `gpui-shell`'s `components` feature depends on
+`gpui-component`; the bare runtime never does. Ordinary Rust applications can use
+the `gpui-kit` facade, but Shell hosting needs a separate dependency. Do not
+assume `gpui_kit::shell` exists.
 
-**Base and adapter are not alternatives.** Script authors normally combine
+**Base and components are not alternatives.** Script authors normally combine
 `gpui-base` layout/input state with styled elements imported from
-`gpui-component`; Rust hosts supply those styled bindings through
-`gpui-component-shell`. Use base-only elements for deliberately custom
-presentation or a base-only host. Do not import `gpui-component-shell` in JS.
+`gpui-component`; a Rust host supplies those styled bindings by enabling
+`gpui-shell`'s `components` feature (`gpui_shell::components` — `init`,
+`components`, `registry`, `new_isolated_runtime`). Use base-only elements for
+deliberately custom presentation or a base-only host. There is no
+`gpui-component-shell` crate or JS module any more; scripts still import the
+catalog as `gpui-component`.
 See [Layer selection and mixed inputs](references/layer-selection.md).
 
 Choose the extension seam before writing code:
