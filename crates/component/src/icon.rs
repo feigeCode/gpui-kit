@@ -3,8 +3,8 @@ use std::sync::Arc;
 use crate::{ActiveTheme, Sizable, Size};
 use gpui::{
     AnyElement, App, AppContext, Context, Div, Entity, Hsla, IntoElement, ParentElement, Pixels,
-    Radians, Render, RenderOnce, SharedString, StyleRefinement, Styled, Svg, Transformation, Window,
-    div, img, prelude::FluentBuilder as _, svg,
+    Radians, Render, RenderOnce, SharedString, StyleRefinement, Styled, Svg, Transformation,
+    Window, div, img, prelude::FluentBuilder as _, svg,
 };
 pub use gpui_kit_assets::{IconColorMode, IconNamed};
 
@@ -298,7 +298,10 @@ impl Render for Icon {
                 .clone()
                 .into_svg(text_size, cx.theme().foreground)
                 .into_any_element(),
-            IconColorMode::Color => self.clone().into_color_element(text_size).into_any_element(),
+            IconColorMode::Color => self
+                .clone()
+                .into_color_element(text_size)
+                .into_any_element(),
         }
     }
 }

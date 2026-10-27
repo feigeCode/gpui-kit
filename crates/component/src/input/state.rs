@@ -130,11 +130,7 @@ impl TextInputState {
     ///
     /// Meant to run after [`Self::set_editor_style`], so the theme's values
     /// stand in for every field the host left unset.
-    pub(crate) fn apply_editor_style(
-        &self,
-        overrides: &super::EditorStyleOverrides,
-        cx: &mut App,
-    ) {
+    pub(crate) fn apply_editor_style(&self, overrides: &super::EditorStyleOverrides, cx: &mut App) {
         dispatch!(self, |state| state.update(cx, |state, _| {
             let mut style = state.editor_style().clone();
             overrides.apply_to(&mut style);

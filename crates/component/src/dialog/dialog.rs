@@ -868,18 +868,16 @@ impl RenderOnce for Dialog {
                                         .when(!has_footer && default_footer, |this| {
                                             let button_props = self.button_props.clone();
                                             this.child(
-                                                div()
-                                                    .pl(paddings.left)
-                                                    .pr(paddings.right)
-                                                    .child(
-                                                        DialogFooter::new()
-                                                            .when(show_cancel, |this| {
-                                                                this.child(button_props.render_cancel(
-                                                                    window, cx,
-                                                                ))
-                                                            })
-                                                            .child(button_props.render_ok(window, cx)),
-                                                    ),
+                                                div().pl(paddings.left).pr(paddings.right).child(
+                                                    DialogFooter::new()
+                                                        .when(show_cancel, |this| {
+                                                            this.child(
+                                                                button_props
+                                                                    .render_cancel(window, cx),
+                                                            )
+                                                        })
+                                                        .child(button_props.render_ok(window, cx)),
+                                                ),
                                             )
                                         })
                                         .children(self.props.close_button.then(|| {

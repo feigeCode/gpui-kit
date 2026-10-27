@@ -355,7 +355,7 @@ mod tests {
     /// （不预聚焦，第一击依赖 GPUI click-to-focus）。
     #[gpui::test]
     fn diag_editor_frame_click_then_drag_selects(cx: &mut TestAppContext) {
-        use gpui::{MouseButton, Focusable as _, point};
+        use gpui::{Focusable as _, MouseButton, point};
 
         cx.update(crate::init);
         let mut state = None;
@@ -375,9 +375,7 @@ mod tests {
             let s = state.read(cx);
             let start_bounds = s.range_to_bounds(&(1..2)).unwrap();
             let end_bounds = s.range_to_bounds(&(10..11)).unwrap();
-            let mid = |b: gpui::Bounds<Pixels>| {
-                point(b.origin.x, b.origin.y + b.size.height * 0.5)
-            };
+            let mid = |b: gpui::Bounds<Pixels>| point(b.origin.x, b.origin.y + b.size.height * 0.5);
             (mid(start_bounds), mid(end_bounds))
         });
 
@@ -435,8 +433,7 @@ mod tests {
             let s = state.read(cx);
             let start_bounds = s.range_to_bounds(&(1..2)).unwrap();
             let end_bounds = s.range_to_bounds(&(10..11)).unwrap();
-            let mid =
-                |b: gpui::Bounds<Pixels>| point(b.origin.x, b.origin.y + b.size.height * 0.5);
+            let mid = |b: gpui::Bounds<Pixels>| point(b.origin.x, b.origin.y + b.size.height * 0.5);
             (mid(start_bounds), mid(end_bounds))
         });
 
