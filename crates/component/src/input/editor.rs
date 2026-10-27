@@ -351,6 +351,114 @@ mod tests {
         assert_eq!(style.editor_gutter_background, gutter);
     }
 
+    /// Repro: 走完整 `Editor` -> `Input` frame 渲染路径的真实拖选
+    /// （不预聚焦，第一击依赖 GPUI click-to-focus）。
+    #[gpui::test]
+    fn diag_editor_frame_click_then_drag_selects(cx: &mut TestAppContext) {
+        use gpui::{MouseButton, Focusable as _, point};
+
+        cx.update(crate::init);
+        let mut state = None;
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let editor =
+                cx.new(|cx| EditorState::new(window, cx).default_value("hello world second"));
+            state = Some(editor.clone());
+            OverridesHarness {
+                state: editor,
+                overrides: None,
+            }
+        });
+        let state = state.unwrap();
+        cx.run_until_parked();
+
+        let (start, end) = cx.update(|_, cx| {
+            let s = state.read(cx);
+            let start_bounds = s.range_to_bounds(&(1..2)).unwrap();
+            let end_bounds = s.range_to_bounds(&(10..11)).unwrap();
+            let mid = |b: gpui::Bounds<Pixels>| {
+                point(b.origin.x, b.origin.y + b.size.height * 0.5)
+            };
+            (mid(start_bounds), mid(end_bounds))
+        });
+
+        cx.update(|window, cx| {
+            assert!(
+                !state.read(cx).focus_handle(cx).is_focused(window),
+                "precondition: editor must start unfocused"
+            );
+        });
+
+        cx.simulate_mouse_down(start, MouseButton::Left, gpui::Modifiers::default());
+        cx.update(|window, cx| {
+            assert!(
+                state.read(cx).focus_handle(cx).is_focused(window),
+                "mouse down must focus the editor"
+            );
+        });
+        cx.simulate_mouse_move(end, MouseButton::Left, gpui::Modifiers::default());
+        cx.simulate_mouse_up(end, MouseButton::Left, gpui::Modifiers::default());
+        cx.update(|_, cx| {
+            let range = state.read(cx).selected_range();
+            assert_eq!(range, 1..10, "drag must select through the Input frame");
+        });
+    }
+
+    /// Repro: 只读 `Editor`（审阅面板并排 diff 用的形态）的拖选。
+    #[gpui::test]
+    fn diag_readonly_editor_drag_selects(cx: &mut TestAppContext) {
+        use gpui::{Focusable as _, MouseButton, point};
+
+        struct ReadonlyHarness {
+            state: Entity<EditorState>,
+        }
+
+        impl Render for ReadonlyHarness {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .size_full()
+                    .child(Editor::new(&self.state).readonly(true))
+            }
+        }
+
+        cx.update(crate::init);
+        let mut state = None;
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let editor =
+                cx.new(|cx| EditorState::new(window, cx).default_value("hello world second"));
+            state = Some(editor.clone());
+            ReadonlyHarness { state: editor }
+        });
+        let state = state.unwrap();
+        cx.run_until_parked();
+
+        let (start, end) = cx.update(|_, cx| {
+            let s = state.read(cx);
+            let start_bounds = s.range_to_bounds(&(1..2)).unwrap();
+            let end_bounds = s.range_to_bounds(&(10..11)).unwrap();
+            let mid =
+                |b: gpui::Bounds<Pixels>| point(b.origin.x, b.origin.y + b.size.height * 0.5);
+            (mid(start_bounds), mid(end_bounds))
+        });
+
+        cx.simulate_mouse_down(start, MouseButton::Left, gpui::Modifiers::default());
+        cx.simulate_mouse_move(end, MouseButton::Left, gpui::Modifiers::default());
+        cx.simulate_mouse_up(end, MouseButton::Left, gpui::Modifiers::default());
+        cx.update(|window, cx| {
+            let s = state.read(cx);
+            let focused = s.focus_handle(cx).is_focused(window);
+            let range = s.selected_range();
+            assert!(
+                focused,
+                "readonly editor must focus on press (focus={focused}, range={range:?})"
+            );
+            assert_eq!(
+                range,
+                1..10,
+                "readonly editor must still select on drag (focus={focused})"
+            );
+        });
+    }
+
     #[test]
     fn an_overlay_touches_only_the_fields_it_sets() {
         let mut painted = InputEditorStyle {

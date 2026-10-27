@@ -9936,6 +9936,55 @@ mod tests {
         }
     }
 
+    /// Repro: 真实用户的拖拽选择——不预聚焦，第一击靠 GPUI 的 click-to-focus。
+    #[gpui::test]
+    fn diag_click_then_drag_selects_without_prior_focus(cx: &mut TestAppContext) {
+        cx.update(crate::init);
+        let view = InputView::<EditorMode>::new(cx);
+        let mut cx = VisualTestContext::from_window(view.window_handle.into(), cx);
+        setup_cursors(&mut cx, &view.input, "|hello world second");
+        // 画一帧但不聚焦，模拟真实首击前的状态。
+        let _ = cx.debug_bounds("editor");
+        cx.run_until_parked();
+
+        cx.update(|window, cx| {
+            let focused = view.input.read(cx).focus_handle.is_focused(window);
+            assert!(!focused, "precondition: editor must start unfocused");
+        });
+
+        let (start, end) = view.input.read_with(&cx, |state, _| {
+            let layout = state.last_layout.as_ref().unwrap();
+            let origin = state.last_bounds.unwrap().origin;
+            let position = |col: usize| {
+                let local = layout.lines[0]
+                    .position_for_index(col, layout, false)
+                    .unwrap();
+                origin + point(layout.line_number_width + local.x, layout.line_height * 0.5)
+            };
+            (position(1), position(10))
+        });
+
+        cx.simulate_mouse_down(start, MouseButton::Left, gpui::Modifiers::default());
+        cx.update(|window, cx| {
+            let state = view.input.read(cx);
+            assert!(
+                state.focus_handle.is_focused(window),
+                "mouse down must focus the editor (GPUI click-to-focus)"
+            );
+            assert!(state.selecting, "mouse down must start selecting");
+        });
+        cx.simulate_mouse_move(end, MouseButton::Left, gpui::Modifiers::default());
+        cx.simulate_mouse_up(end, MouseButton::Left, gpui::Modifiers::default());
+        view.input.read_with(&cx, |state, _| {
+            let ranges: Vec<_> = state
+                .selections
+                .iter()
+                .map(|sel| sel.start..sel.end)
+                .collect();
+            assert_eq!(ranges, vec![1..10], "drag must select");
+        });
+    }
+
     #[gpui::test]
     fn test_alt_drag_extends_upward_from_an_existing_cursor(cx: &mut TestAppContext) {
         cx.update(crate::init);
